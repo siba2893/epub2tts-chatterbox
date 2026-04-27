@@ -26,3 +26,17 @@ pip-log.txt
 .tox
 
 .python-version
+
+# Web UI
+node_modules/
+webui/frontend/dist/
+webui/frontend/node_modules/
+.pytest_cache/
+
+# Job working dirs created by the web backend
+webui/backend/jobs/
+webui/backend/samples/
+
+# Smoke-test outputs
+tests/fixtures/*.m4b
+tests/fixtures/*.epub.txt

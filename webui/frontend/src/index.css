@@ -1,0 +1,45 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html, body, #root {
+    height: 100%;
+  }
+  body {
+    font-feature-settings: "ss01", "cv01";
+  }
+}
+
+@layer components {
+  /* Monochrome surface: a card that sits one z-layer above the page background. */
+  .surface {
+    @apply bg-zinc-900 border border-zinc-800 rounded-lg;
+  }
+  .surface-muted {
+    @apply bg-zinc-900/40 border border-zinc-800/60 rounded-lg;
+  }
+
+  .btn {
+    @apply inline-flex items-center justify-center rounded-md border border-zinc-700
+           bg-zinc-900 px-4 py-2 text-sm font-medium tracking-tight text-zinc-100
+           transition-colors hover:bg-zinc-800 hover:border-zinc-600
+           focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-zinc-400
+           disabled:opacity-50 disabled:cursor-not-allowed;
+  }
+  .btn-primary {
+    @apply btn border-zinc-200 bg-zinc-100 text-zinc-950 hover:bg-white hover:border-white;
+  }
+  .btn-ghost {
+    @apply btn border-transparent bg-transparent hover:bg-zinc-800;
+  }
+
+  .input {
+    @apply block w-full rounded-md border border-zinc-800 bg-zinc-950 px-3 py-2
+           text-sm text-zinc-100 placeholder:text-zinc-500
+           focus:border-zinc-600 focus:outline-none focus:ring-1 focus:ring-zinc-600;
+  }
+  .label {
+    @apply block text-xs uppercase tracking-wider text-zinc-500 mb-1;
+  }
+}

@@ -1,0 +1,9 @@
+# Development dependencies for the web UI backend + tests.
+# The runtime CLI dependencies live in requirements.txt.
+fastapi>=0.110
+uvicorn[standard]>=0.29
+python-multipart>=0.0.9
+sse-starlette>=2.0
+httpx>=0.27
+pytest>=8.0
+pytest-asyncio>=0.23

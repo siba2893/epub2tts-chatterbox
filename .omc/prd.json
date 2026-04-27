@@ -1,0 +1,128 @@
+{
+  "project": "epub2tts-chatterbox web UI",
+  "summary": "FastAPI + React + Tailwind monochromatic minimalist UI on top of the existing CLI.",
+  "stories": [
+    {
+      "id": "US-001",
+      "title": "Project scaffolding",
+      "passes": false,
+      "acceptanceCriteria": [
+        "webui/backend/ and webui/frontend/ directories exist",
+        ".gitignore excludes node_modules, dist, .pytest_cache, *.egg-info",
+        "requirements-dev.txt lists fastapi, uvicorn[standard], python-multipart, sse-starlette, httpx, pytest-asyncio",
+        "webui/frontend has a Vite React+TS scaffold with package.json and vite.config.ts",
+        "Tailwind installed and configured with a zinc-based monochrome theme"
+      ]
+    },
+    {
+      "id": "US-002",
+      "title": "Backend foundation: app, job registry, schemas",
+      "passes": false,
+      "acceptanceCriteria": [
+        "webui/backend/app.py exposes a FastAPI instance importable as webui.backend.app:app",
+        "webui/backend/jobs.py defines an in-memory JobRegistry with status (queued|running|paused|done|failed|cancelled)",
+        "webui/backend/schemas.py defines Pydantic models for UploadResponse, JobStatus, Settings, ChapterPreview",
+        "Backend imports without error in the project's .venv",
+        "GET /api/health returns {status: 'ok'}"
+      ]
+    },
+    {
+      "id": "US-003",
+      "title": "Upload + naming-preview + job-status endpoints",
+      "passes": false,
+      "acceptanceCriteria": [
+        "POST /api/upload accepts an EPUB via multipart and returns {job_id, title, author}",
+        "GET /api/jobs/{id}/naming-preview returns 4 columns (toc, heading, class, fallback) for at least 1 sample chapter",
+        "POST /api/jobs/{id}/naming accepts {method} and writes the .txt with the chosen naming",
+        "GET /api/jobs/{id} returns current JobStatus snapshot"
+      ]
+    },
+    {
+      "id": "US-004",
+      "title": "Conversion run + SSE progress stream",
+      "passes": false,
+      "acceptanceCriteria": [
+        "POST /api/jobs/{id}/start launches the TTS conversion as a subprocess",
+        "GET /api/jobs/{id}/events streams SSE events (chapter / paragraph / sentence / elapsed / eta)",
+        "Progress events parse from the existing logger output",
+        "POST /api/jobs/{id}/cancel terminates the subprocess and preserves partN.flac"
+      ]
+    },
+    {
+      "id": "US-005",
+      "title": "Inline .txt editor endpoints",
+      "passes": false,
+      "acceptanceCriteria": [
+        "GET /api/jobs/{id}/text returns {title, author, chapters: [{title, paragraphs}]}",
+        "PUT /api/jobs/{id}/text accepts the same shape and serializes back to the .txt format",
+        "Round-trip via get_book(...) preserves title, author, and chapter titles"
+      ]
+    },
+    {
+      "id": "US-006",
+      "title": "Frontend foundation: layout, API client, monochrome theme",
+      "passes": false,
+      "acceptanceCriteria": [
+        "App boots via `npm run dev` on localhost:5173",
+        "Tailwind compiles a zinc-950 background with zinc-100 text and 1px zinc-800 borders",
+        "src/api.ts exports typed wrappers for upload, jobs, naming, text, and an SSE helper",
+        "App shell shows header + footer + main slot in a max-w-3xl content column"
+      ]
+    },
+    {
+      "id": "US-007",
+      "title": "Tier 1 UI: upload card + naming preview table",
+      "passes": false,
+      "acceptanceCriteria": [
+        "<UploadCard> uses an <input type='file' accept='.epub'> hidden behind a styled label",
+        "Selecting a file POSTs /api/upload and transitions to the naming preview view",
+        "<NamingPreview> renders the 4 methods as clickable column headers; selected column is visually highlighted",
+        "Clicking 'Continue' POSTs /api/jobs/{id}/naming with the selected method"
+      ]
+    },
+    {
+      "id": "US-008",
+      "title": "Tier 1 UI: live progress + chapter editor",
+      "passes": false,
+      "acceptanceCriteria": [
+        "<JobProgress> subscribes to SSE and renders chapter index, paragraph index, elapsed, ETA, throughput, and a thin progress bar",
+        "<ChapterEditor> renders a sidebar of chapters and a main pane with title + paragraph textareas",
+        "'Save & Convert' PUTs the file then POSTs /api/jobs/{id}/start",
+        "Adding/removing/reordering chapters works without page reload"
+      ]
+    },
+    {
+      "id": "US-009",
+      "title": "Tier 2: voice samples + settings panel + resume detection + cancel",
+      "passes": false,
+      "acceptanceCriteria": [
+        "<SampleBrowser> uploads .wav files and previews them via <audio controls>",
+        "<SettingsPanel> form persists settings to localStorage and forwards them as CLI flags",
+        "/api/jobs/{id}/resume-state returns {completed_chapters, total_chapters, completed_titles}",
+        "Cancel button terminates the job and partN.flac files remain on disk for resume"
+      ]
+    },
+    {
+      "id": "US-010",
+      "title": "Tier 3: library + per-chapter preview + re-render",
+      "passes": false,
+      "acceptanceCriteria": [
+        "GET /api/library returns one entry per .m4b file with title, author, cover URL",
+        "<Library> grid renders cards with cover image",
+        "Per-chapter play button streams the corresponding partN.flac",
+        "Per-chapter 're-render' POSTs /api/jobs/{id}/chapter/{n}/rerun and the chapter regenerates"
+      ]
+    },
+    {
+      "id": "US-011",
+      "title": "Quality gate: tests, build, regression",
+      "passes": false,
+      "acceptanceCriteria": [
+        "pytest tests/ + pytest webui/backend/tests both pass",
+        "npm run build produces a dist/ bundle without errors",
+        "Existing 49 unit tests still pass (no regression)",
+        "README updated with web UI quickstart"
+      ]
+    }
+  ]
+}

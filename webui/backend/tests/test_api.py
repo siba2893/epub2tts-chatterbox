@@ -1,0 +1,123 @@
+"""Smoke tests for the FastAPI web UI backend."""
+from __future__ import annotations
+
+from pathlib import Path
+
+import pytest
+from fastapi.testclient import TestClient
+
+from webui.backend.app import app
+from webui.backend.jobs import parse_progress_line
+
+
+FIXTURE_EPUB = Path(__file__).resolve().parents[3] / "tests" / "fixtures" / "sample.epub"
+
+
+@pytest.fixture(scope="module")
+def client() -> TestClient:
+    return TestClient(app)
+
+
+class TestHealth:
+    def test_health_ok(self, client: TestClient):
+        r = client.get("/api/health")
+        assert r.status_code == 200
+        assert r.json()["status"] == "ok"
+
+
+class TestUploadAndNaming:
+    @pytest.fixture(scope="class")
+    def uploaded_job(self, client: TestClient) -> str:
+        assert FIXTURE_EPUB.exists(), f"fixture missing at {FIXTURE_EPUB}"
+        with FIXTURE_EPUB.open("rb") as f:
+            r = client.post(
+                "/api/upload",
+                files={"file": ("sample.epub", f, "application/epub+zip")},
+            )
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body["job_id"]
+        assert body["title"] == "Smoke Test Book"
+        assert body["author"] == "Test Author"
+        assert body["chapter_count"] >= 1
+        return body["job_id"]
+
+    def test_rejects_non_epub(self, client: TestClient):
+        r = client.post(
+            "/api/upload",
+            files={"file": ("notes.txt", b"hello", "text/plain")},
+        )
+        assert r.status_code == 400
+
+    def test_naming_preview_rows(self, client: TestClient, uploaded_job: str):
+        r = client.get(f"/api/jobs/{uploaded_job}/naming-preview")
+        assert r.status_code == 200
+        rows = r.json()["rows"]
+        assert isinstance(rows, list)
+        assert len(rows) >= 1
+        # Each row should have all four method keys present (values may be null).
+        for row in rows:
+            assert set(row.keys()) >= {"toc", "heading", "class", "fallback"}
+
+    def test_naming_choice_writes_text(self, client: TestClient, uploaded_job: str):
+        r = client.post(
+            f"/api/jobs/{uploaded_job}/naming",
+            json={"method": "toc"},
+        )
+        assert r.status_code == 200
+        assert r.json()["method"] == "toc"
+
+    def test_text_round_trip(self, client: TestClient, uploaded_job: str):
+        # First, ensure naming step ran so a .txt exists.
+        client.post(f"/api/jobs/{uploaded_job}/naming", json={"method": "toc"})
+
+        r = client.get(f"/api/jobs/{uploaded_job}/text")
+        assert r.status_code == 200
+        doc = r.json()
+        assert doc["title"]
+        assert doc["author"]
+        assert isinstance(doc["chapters"], list)
+        assert len(doc["chapters"]) >= 1
+
+        # Round-trip: PUT the same shape back.
+        r = client.put(f"/api/jobs/{uploaded_job}/text", json=doc)
+        assert r.status_code == 200
+        assert r.json()["title"] == doc["title"]
+
+
+class TestJobStatus:
+    def test_status_for_unknown_job_404(self, client: TestClient):
+        r = client.get("/api/jobs/does-not-exist")
+        assert r.status_code == 404
+
+
+class TestProgressParser:
+    def test_chapter_line_parses(self):
+        line = "Chapter (3/12): The Forest | Elapsed: 2m 5s | ETA: 7m 14s"
+        evt = parse_progress_line(line)
+        assert evt == {
+            "type": "chapter",
+            "index": 3,
+            "total": 12,
+            "title": "The Forest",
+        }
+
+    def test_device_line_parses(self):
+        evt = parse_progress_line("Attempting to use device: cuda")
+        assert evt == {"type": "device", "device": "cuda"}
+
+    def test_skip_chapter_line(self):
+        evt = parse_progress_line("part4.flac exists, skipping to next chapter")
+        assert evt is not None and evt["type"] == "skip_chapter"
+
+    def test_blank_line_returns_none(self):
+        assert parse_progress_line("") is None
+        assert parse_progress_line("   \n") is None
+
+    def test_unrecognized_line_is_log(self):
+        evt = parse_progress_line("Loading some random library...")
+        assert evt is not None and evt["type"] == "log"
+
+    def test_error_line_classified(self):
+        evt = parse_progress_line("ERROR: ffmpeg failed")
+        assert evt is not None and evt["type"] == "error"

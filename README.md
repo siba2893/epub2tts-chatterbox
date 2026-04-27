@@ -38,6 +38,28 @@
 `deactivate`
 </details>
 
+## 🖥️ Web UI
+
+A FastAPI + React + Tailwind front-end lives under `webui/`. It wraps the existing CLI as a subprocess and surfaces upload, chapter-naming preview, an inline `.txt` editor, and live SSE progress in a monochromatic dark interface.
+
+```
+# 1. Install backend dev deps (one time)
+pip install -r requirements-dev.txt
+
+# 2. Install frontend deps (one time)
+cd webui/frontend && npm install && cd ../..
+
+# 3. Run the FastAPI backend (port 8000)
+uvicorn webui.backend.app:app --reload
+
+# 4. In a second terminal, run the Vite dev server (port 5173)
+cd webui/frontend && npm run dev
+
+# Open http://localhost:5173
+```
+
+Backend tests: `pytest webui/backend/tests/`. Frontend production bundle: `cd webui/frontend && npm run build`.
+
 ## 🐞 Reporting bugs
 <details>
 <summary>How to report bugs/issues</summary>
