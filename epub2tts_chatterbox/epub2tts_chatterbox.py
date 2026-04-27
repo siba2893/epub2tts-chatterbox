@@ -47,7 +47,9 @@ from epub2tts_chatterbox.text_utils import (
     combine_short_sentences,
     conditional_sentence_case,
     format_time_adaptive,
+    get_book,
     sort_key,
+    validate_text_file,
 )
 
 warnings.filterwarnings("ignore")
@@ -87,56 +89,6 @@ def ensure_punkt():
         nltk.data.find("tokenizers/punkt_tab")
     except LookupError:
         nltk.download("punkt_tab")
-
-def get_book(sourcefile):
-    book_contents = []
-    book_title = sourcefile
-    book_author = "Unknown"
-    chapter_titles = []
-
-    with open(sourcefile, "r", encoding="utf-8") as file:
-        current_chapter = {"title": "blank", "paragraphs": []}
-        initialized_first_chapter = False
-        lines_skipped = 0
-        for line in file:
-
-            if lines_skipped < 2 and (line.startswith("Title") or line.startswith("Author")):
-                lines_skipped += 1
-                if line.startswith('Title: '):
-                    book_title = line.replace('Title: ', '').strip()
-                elif line.startswith('Author: '):
-                    book_author = line.replace('Author: ', '').strip()
-                continue
-
-            line = line.strip()
-            if line.startswith("#"):
-                if current_chapter["paragraphs"] or not initialized_first_chapter:
-                    if initialized_first_chapter:
-                        book_contents.append(current_chapter)
-                    current_chapter = {"title": None, "paragraphs": []}
-                    initialized_first_chapter = True
-                chapter_title = line[1:].strip()
-                if any(c.isalnum() for c in chapter_title):
-                    current_chapter["title"] = chapter_title
-                    chapter_titles.append(current_chapter["title"])
-                else:
-                    current_chapter["title"] = "blank"
-                    chapter_titles.append("blank")
-            elif line:
-                if not initialized_first_chapter:
-                    chapter_titles.append("blank")
-                    initialized_first_chapter = True
-                if any(char.isalnum() for char in line):
-                    sentences = sent_tokenize(line)
-                    cleaned_sentences = [s for s in sentences if any(char.isalnum() for char in s)]
-                    line = ' '.join(cleaned_sentences)
-                    current_chapter["paragraphs"].append(line)
-
-        # Append the last chapter if it contains any paragraphs.
-        if current_chapter["paragraphs"]:
-            book_contents.append(current_chapter)
-
-    return book_contents, book_title, book_author, chapter_titles
 
 def check_for_file(filename):
     if os.path.isfile(filename):
@@ -321,51 +273,49 @@ def _run_ffmpeg(cmd, step_description):
         raise SystemExit(1) from e
 
 
+def _quiet_remove(path):
+    """Best-effort os.remove that silently ignores files that don't exist."""
+    try:
+        os.remove(path)
+    except FileNotFoundError:
+        pass
+
+
 def make_m4b(files, sourcefile, speaker):
     filelist = "filelist.txt"
     speaker_file = os.path.basename(speaker)
     basefile = sourcefile.replace(".txt", "")
     outputm4a = f"{basefile}.m4a"
     outputm4b = f"{basefile} ({speaker_file.split('.wav')[0]}).m4b"
-    with open(filelist, "w") as f:
-        for filename in files:
-            filename = filename.replace("'", "'\\''")
-            f.write(f"file '{filename}'\n")
-    ffmpeg_command = [
-        "ffmpeg",
-        "-f",
-        "concat",
-        "-safe",
-        "0",
-        "-i",
-        filelist,
-        "-codec:a",
-        "flac",
-        "-f",
-        "mp4",
-        "-strict",
-        "-2",
-        outputm4a,
-    ]
-    _run_ffmpeg(ffmpeg_command, "concat to m4a")
-    ffmpeg_command = [
-        "ffmpeg",
-        "-i",
-        outputm4a,
-        "-i",
-        "FFMETADATAFILE",
-        "-map_metadata",
-        "1",
-        "-codec",
-        "aac",
-        outputm4b,
-    ]
-    _run_ffmpeg(ffmpeg_command, "encode m4b with metadata")
-    os.remove(filelist)
-    os.remove("FFMETADATAFILE")
-    os.remove(outputm4a)
+
+    try:
+        with open(filelist, "w") as f:
+            for filename in files:
+                filename = filename.replace("'", "'\\''")
+                f.write(f"file '{filename}'\n")
+        _run_ffmpeg(
+            [
+                "ffmpeg", "-f", "concat", "-safe", "0", "-i", filelist,
+                "-codec:a", "flac", "-f", "mp4", "-strict", "-2", outputm4a,
+            ],
+            "concat to m4a",
+        )
+        _run_ffmpeg(
+            [
+                "ffmpeg", "-i", outputm4a, "-i", "FFMETADATAFILE",
+                "-map_metadata", "1", "-codec", "aac", outputm4b,
+            ],
+            "encode m4b with metadata",
+        )
+    finally:
+        # Always clean scratch intermediates; if a run crashed, this keeps the
+        # working directory tidy without touching the caller's resume state.
+        for path in (filelist, "FFMETADATAFILE", outputm4a):
+            _quiet_remove(path)
+
+    # Inputs (partN.flac) are the resume state; only remove on success.
     for f in files:
-        os.remove(f)
+        _quiet_remove(f)
     return outputm4b
 
 def add_cover(cover_img, filename):
@@ -382,59 +332,6 @@ def add_cover(cover_img, filename):
         m4b.save()
     except (OSError, mp4.MP4StreamInfoError) as e:
         logger.warning("Failed to embed cover image %s: %s", cover_img, e)
-
-def validate_text_file(sourcefile, book_title, book_author, book_contents):
-    """
-    Validate that the text file contains required elements: title, author, and at least one chapter break.
-
-    Args:
-        sourcefile: Path to the source file
-        book_title: Extracted book title
-        book_author: Extracted book author
-        book_contents: List of chapter dictionaries
-
-    Raises:
-        SystemExit: If validation fails
-    """
-    errors = []
-
-    # Check if title was found (if it's still the filename, no title was extracted)
-    if book_title == sourcefile:
-        errors.append("- Missing 'Title:' line at the beginning of the file")
-
-    # Check if author was found
-    if book_author == "Unknown":
-        errors.append("- Missing 'Author:' line at the beginning of the file")
-
-    # Check if at least one chapter break was found
-    # We need to verify the file has at least one line starting with #
-    has_chapter_break = False
-    with open(sourcefile, "r", encoding="utf-8") as file:
-        for line in file:
-            if line.strip().startswith("#"):
-                has_chapter_break = True
-                break
-
-    if not has_chapter_break:
-        errors.append("- Missing at least one chapter break line starting with '#'")
-
-    if errors:
-        bar = "=" * 70
-        message = (
-            f"\n{bar}\n"
-            "ERROR: Text file validation failed\n"
-            f"{bar}\n\n"
-            "The text file must contain the following elements:\n\n"
-            "1. A 'Title:' line at the beginning (e.g., 'Title: My Book')\n"
-            "2. An 'Author:' line at the beginning (e.g., 'Author: John Doe')\n"
-            "3. At least one chapter break line starting with '#' (e.g., '# Chapter 1')\n\n"
-            "Missing elements:\n"
-            + "\n".join(errors) + "\n\n"
-            "Please correct the text file format and try again.\n"
-            f"{bar}"
-        )
-        logger.error(message)
-        sys.exit(1)
 
 def main():
     parser = argparse.ArgumentParser(

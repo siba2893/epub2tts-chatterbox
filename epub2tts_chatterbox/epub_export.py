@@ -17,12 +17,14 @@ Example usage:
         print(f"Chapter: {chapter['title']}")
         print(f"Content: {chapter['text'][:100]}...")
 """
+from __future__ import annotations
 
-import os
+import posixpath
 import re
 import warnings
 import zipfile
-from io import BytesIO
+from pathlib import Path
+from typing import IO, Any, Iterable
 
 from bs4 import BeautifulSoup
 import ebooklib
@@ -43,7 +45,7 @@ NAMESPACES = {
 }
 
 
-def build_toc_map(toc):
+def build_toc_map(toc: Iterable[Any]) -> dict[str, str]:
     """
     Build a mapping from filename to TOC title.
 
@@ -53,22 +55,27 @@ def build_toc_map(toc):
     Returns:
         dict: Mapping from filename (without anchor) to chapter title.
     """
-    toc_map = {}
+    toc_map: dict[str, str] = {}
 
-    def _process_toc_items(items):
+    def _process_toc_items(items: Iterable[Any]) -> None:
         for item in items:
-            if hasattr(item, 'href') and hasattr(item, 'title'):
+            if hasattr(item, "href") and hasattr(item, "title"):
                 # Remove anchor part (e.g., "html/ch01.html#section1" -> "html/ch01.html")
-                filename = item.href.split('#')[0]
+                filename = item.href.split("#")[0]
                 toc_map[filename] = item.title
-            elif hasattr(item, '__iter__'):
+            elif hasattr(item, "__iter__"):
                 _process_toc_items(item)
 
     _process_toc_items(toc)
     return toc_map
 
 
-def get_chapter_titles_by_method(chap, item_name=None, item_id=None, toc_map=None):
+def get_chapter_titles_by_method(
+    chap: bytes | str,
+    item_name: str | None = None,
+    item_id: str | None = None,
+    toc_map: dict[str, str] | None = None,
+) -> dict[str, str | None]:
     """
     Get chapter titles using different detection methods.
 
@@ -83,40 +90,47 @@ def get_chapter_titles_by_method(chap, item_name=None, item_id=None, toc_map=Non
               Keys: 'toc', 'heading', 'class', 'fallback'
     """
     soup = BeautifulSoup(chap, "html.parser")
-    titles = {}
+    titles: dict[str, str | None] = {}
 
     # Method 1: TOC lookup by filename
     if toc_map and item_name:
-        titles['toc'] = toc_map.get(item_name)
+        titles["toc"] = toc_map.get(item_name)
 
     # Method 2: Heading tags
-    for tag in ['h1', 'h2', 'h3']:
+    for tag in ["h1", "h2", "h3"]:
         heading = soup.find(tag)
         if heading and heading.text.strip():
-            titles['heading'] = heading.text.strip()
+            titles["heading"] = heading.text.strip()
             break
-    if 'heading' not in titles:
-        titles['heading'] = None
+    if "heading" not in titles:
+        titles["heading"] = None
 
     # Method 3: CSS classes
-    for class_name in ['chapter', 'chapter-title', 'title', 'heading', 'chapterhead']:
+    for class_name in ["chapter", "chapter-title", "title", "heading", "chapterhead"]:
         element = soup.find(class_=class_name)
         if element and element.text.strip():
-            titles['class'] = element.text.strip()
+            titles["class"] = element.text.strip()
             break
-    if 'class' not in titles:
-        titles['class'] = None
+    if "class" not in titles:
+        titles["class"] = None
 
     # Method 4: Fallback to item ID
     if item_id:
-        titles['fallback'] = item_id.replace('.xhtml', '').replace('.html', '').replace('_', ' ').title()
+        titles["fallback"] = item_id.replace(".xhtml", "").replace(".html", "").replace("_", " ").title()
     else:
-        titles['fallback'] = None
+        titles["fallback"] = None
 
     return titles
 
 
-def extract_chapter_content(chap, item_name=None, item_id=None, toc_map=None, naming_method='auto', verbose=True):
+def extract_chapter_content(
+    chap: bytes | str,
+    item_name: str | None = None,
+    item_id: str | None = None,
+    toc_map: dict[str, str] | None = None,
+    naming_method: str = "auto",
+    verbose: bool = True,
+) -> tuple[str | None, list[str]]:
     """
     Extract chapter title and paragraphs from an EPUB chapter.
 
@@ -133,37 +147,35 @@ def extract_chapter_content(chap, item_name=None, item_id=None, toc_map=None, na
     """
     soup = BeautifulSoup(chap, "html.parser")
 
-    # Get titles from all methods
     titles = get_chapter_titles_by_method(chap, item_name, item_id, toc_map)
 
-    chapter_title = None
+    chapter_title: str | None = None
 
-    if naming_method == 'auto':
+    if naming_method == "auto":
         # Priority: TOC > heading > class > fallback
-        if titles.get('toc'):
-            chapter_title = titles['toc']
+        if titles.get("toc"):
+            chapter_title = titles["toc"]
             if verbose:
                 print(f"Found title in TOC: '{chapter_title}'")
-        elif titles.get('heading'):
-            chapter_title = titles['heading']
+        elif titles.get("heading"):
+            chapter_title = titles["heading"]
             if verbose:
                 print(f"Found title in heading tag: '{chapter_title}'")
-        elif titles.get('class'):
-            chapter_title = titles['class']
+        elif titles.get("class"):
+            chapter_title = titles["class"]
             if verbose:
                 print(f"Found title in CSS class: '{chapter_title}'")
         else:
-            chapter_title = titles.get('fallback')
+            chapter_title = titles.get("fallback")
             if verbose:
                 print(f"No title found, using fallback: '{chapter_title}'")
     else:
-        # Use the specified method, with fallback if not available
         chapter_title = titles.get(naming_method)
         if chapter_title:
             if verbose:
                 print(f"Using {naming_method} title: '{chapter_title}'")
         else:
-            chapter_title = titles.get('fallback')
+            chapter_title = titles.get("fallback")
             if verbose:
                 print(f"Method '{naming_method}' unavailable, using fallback: '{chapter_title}'")
 
@@ -177,8 +189,7 @@ def extract_chapter_content(chap, item_name=None, item_id=None, toc_map=None, na
         if sup.text.isdigit():
             sup.extract()
 
-    # Extract paragraphs
-    paragraphs = []
+    paragraphs: list[str] = []
     chapter_paragraphs = soup.find_all("p")
     if not chapter_paragraphs:
         if verbose:
@@ -193,7 +204,7 @@ def extract_chapter_content(chap, item_name=None, item_id=None, toc_map=None, na
     return chapter_title, paragraphs
 
 
-def get_epub_cover(epub_path):
+def get_epub_cover(epub_path: str | Path) -> IO[bytes] | None:
     """
     Extract cover image from an EPUB file.
 
@@ -204,32 +215,38 @@ def get_epub_cover(epub_path):
         file-like object containing the cover image, or None if not found.
     """
     try:
-        with zipfile.ZipFile(epub_path) as z:
+        with zipfile.ZipFile(str(epub_path)) as z:
             t = etree.fromstring(z.read("META-INF/container.xml"))
-            rootfile_path = t.xpath("/u:container/u:rootfiles/u:rootfile",
-                                    namespaces=NAMESPACES)[0].get("full-path")
+            rootfile_path = t.xpath(
+                "/u:container/u:rootfiles/u:rootfile", namespaces=NAMESPACES
+            )[0].get("full-path")
 
             t = etree.fromstring(z.read(rootfile_path))
-            cover_meta = t.xpath("//opf:metadata/opf:meta[@name='cover']",
-                                namespaces=NAMESPACES)
+            cover_meta = t.xpath(
+                "//opf:metadata/opf:meta[@name='cover']", namespaces=NAMESPACES
+            )
             if not cover_meta:
                 return None
             cover_id = cover_meta[0].get("content")
 
-            cover_item = t.xpath("//opf:manifest/opf:item[@id='" + cover_id + "']",
-                                namespaces=NAMESPACES)
+            cover_item = t.xpath(
+                "//opf:manifest/opf:item[@id='" + cover_id + "']",
+                namespaces=NAMESPACES,
+            )
             if not cover_item:
                 return None
             cover_href = cover_item[0].get("href")
-            cover_path = os.path.join(os.path.dirname(rootfile_path), cover_href)
-            if os.name == 'nt' and '\\' in cover_path:
-                cover_path = cover_path.replace("\\", "/")
+            # ZIP entries always use POSIX separators regardless of host OS,
+            # so use posixpath here (not os.path) to avoid backslashes on Windows.
+            cover_path = posixpath.join(posixpath.dirname(rootfile_path), cover_href)
             return z.open(cover_path)
     except (FileNotFoundError, KeyError, IndexError):
         return None
 
 
-def preview_chapter_names(book, sourcefile=None, max_samples=6):
+def preview_chapter_names(
+    book: epub.EpubBook, sourcefile: str | Path | None = None, max_samples: int = 6
+) -> str:
     """
     Preview chapter names using different naming methods and let user choose interactively.
 
@@ -241,15 +258,13 @@ def preview_chapter_names(book, sourcefile=None, max_samples=6):
     Returns:
         str: The chosen naming method ('auto', 'toc', 'heading', 'class', 'fallback').
     """
-    # Get the table of contents and build the map
-    toc = getattr(book, 'toc', [])
+    toc = getattr(book, "toc", [])
     toc_map = build_toc_map(toc)
 
-    spine_ids = [spine_tuple[0] for spine_tuple in book.spine if spine_tuple[1] == 'yes']
+    spine_ids = [spine_tuple[0] for spine_tuple in book.spine if spine_tuple[1] == "yes"]
     items = {item.get_id(): item for item in book.get_items() if item.get_type() == ebooklib.ITEM_DOCUMENT}
 
-    # Collect sample chapters with content
-    samples = []
+    samples: list[dict[str, str | None]] = []
     for id in spine_ids:
         if len(samples) >= max_samples:
             break
@@ -266,42 +281,37 @@ def preview_chapter_names(book, sourcefile=None, max_samples=6):
             item.get_content(),
             item_name=item.get_name(),
             item_id=id,
-            toc_map=toc_map
+            toc_map=toc_map,
         )
         samples.append(titles)
 
-    # Check if all methods produce the same results
-    methods = ['toc', 'heading', 'class', 'fallback']
+    methods = ["toc", "heading", "class", "fallback"]
     method_results = {m: [s.get(m) for s in samples] for m in methods}
 
-    # Filter to methods that have at least some results
-    available_methods = {m: results for m, results in method_results.items()
-                        if any(r is not None for r in results)}
+    available_methods = {
+        m: results for m, results in method_results.items() if any(r is not None for r in results)
+    }
 
-    # Check if methods produce meaningfully different results
-    unique_results = set()
+    unique_results: set[tuple[str | None, ...]] = set()
     for m, results in available_methods.items():
         unique_results.add(tuple(r for r in results if r is not None))
 
     if len(unique_results) <= 1:
-        # All methods produce the same results, use auto
         print("All naming methods produce similar results. Using automatic selection.")
-        return 'auto'
+        return "auto"
 
-    # Show preview and let user choose
     print("\n" + "=" * 70)
     print("CHAPTER NAMING PREVIEW")
     print("=" * 70)
     print("\nDifferent methods found different chapter names. Here's a comparison:\n")
 
-    # Show table header
     print(f"{'#':<3} {'TOC':<30} {'Heading':<30} {'Fallback':<20}")
     print("-" * 83)
 
     for i, sample in enumerate(samples, 1):
-        toc_name = (sample.get('toc') or '-')[:28]
-        heading_name = (sample.get('heading') or '-')[:28]
-        fallback_name = (sample.get('fallback') or '-')[:18]
+        toc_name = (sample.get("toc") or "-")[:28]
+        heading_name = (sample.get("heading") or "-")[:28]
+        fallback_name = (sample.get("fallback") or "-")[:18]
         print(f"{i:<3} {toc_name:<30} {heading_name:<30} {fallback_name:<20}")
 
     print("\n" + "-" * 83)
@@ -316,22 +326,22 @@ def preview_chapter_names(book, sourcefile=None, max_samples=6):
         try:
             choice = input("\nChoose naming method [1-5, default=1]: ").strip()
         except EOFError:
-            return 'auto'
-        if choice == '' or choice == '1':
-            return 'auto'
-        elif choice == '2':
-            return 'toc'
-        elif choice == '3':
-            return 'heading'
-        elif choice == '4':
-            return 'fallback'
-        elif choice == '5':
-            return 'auto'
+            return "auto"
+        if choice == "" or choice == "1":
+            return "auto"
+        elif choice == "2":
+            return "toc"
+        elif choice == "3":
+            return "heading"
+        elif choice == "4":
+            return "fallback"
+        elif choice == "5":
+            return "auto"
         else:
             print("Invalid choice. Please enter 1-5.")
 
 
-def clean_text(text):
+def clean_text(text: str) -> str:
     """
     Clean text for TTS output.
 
@@ -341,15 +351,20 @@ def clean_text(text):
     Returns:
         Cleaned text string.
     """
-    clean = re.sub(r'[\s\n]+', ' ', text)
-    clean = re.sub(r'[\u201c\u201d]', '"', clean)  # Curly double quotes to standard
-    clean = re.sub(r'[\u2018\u2019]', "'", clean)  # Curly single quotes to standard
-    clean = re.sub(r'--', ', ', clean)
-    clean = re.sub(r'\u2014', ', ', clean)  # Em dash
+    clean = re.sub(r"[\s\n]+", " ", text)
+    clean = re.sub(r"[“”]", '"', clean)  # Curly double quotes to standard
+    clean = re.sub(r"[‘’]", "'", clean)  # Curly single quotes to standard
+    clean = re.sub(r"--", ", ", clean)
+    clean = re.sub(r"—", ", ", clean)  # Em dash
     return clean.strip()
 
 
-def export_epub_to_dict(epub_path, naming_method=None, verbose=True, interactive=True):
+def export_epub_to_dict(
+    epub_path: str | Path,
+    naming_method: str | None = None,
+    verbose: bool = True,
+    interactive: bool = True,
+) -> dict[str, Any]:
     """
     Export EPUB to a dictionary structure (no file written).
 
@@ -368,16 +383,14 @@ def export_epub_to_dict(epub_path, naming_method=None, verbose=True, interactive
             'chapters': [{'title': str, 'paragraphs': [str], 'text': str}, ...]
         }
     """
-    book = epub.read_epub(epub_path)
+    book = epub.read_epub(str(epub_path))
 
-    # Get metadata
     title_meta = book.get_metadata("DC", "title")
     author_meta = book.get_metadata("DC", "creator")
     title = title_meta[0][0] if title_meta else "Unknown Title"
     author = author_meta[0][0] if author_meta else "Unknown Author"
 
-    # Get cover image
-    cover_image = None
+    cover_image: Image.Image | None = None
     cover_file = get_epub_cover(epub_path)
     if cover_file:
         try:
@@ -385,23 +398,20 @@ def export_epub_to_dict(epub_path, naming_method=None, verbose=True, interactive
         except Exception:
             pass
 
-    # Build TOC map
-    toc = getattr(book, 'toc', [])
+    toc = getattr(book, "toc", [])
     toc_map = build_toc_map(toc)
 
-    # Get naming method
     if naming_method is None and interactive:
         naming_method = preview_chapter_names(book, epub_path)
         if verbose:
             print(f"\nUsing '{naming_method}' naming method.\n")
     elif naming_method is None:
-        naming_method = 'auto'
+        naming_method = "auto"
 
-    # Extract chapters
-    spine_ids = [spine_tuple[0] for spine_tuple in book.spine if spine_tuple[1] == 'yes']
+    spine_ids = [spine_tuple[0] for spine_tuple in book.spine if spine_tuple[1] == "yes"]
     items = {item.get_id(): item for item in book.get_items() if item.get_type() == ebooklib.ITEM_DOCUMENT}
 
-    chapters = []
+    chapters: list[dict[str, Any]] = []
     for id in spine_ids:
         item = items.get(id)
         if item is None:
@@ -413,27 +423,34 @@ def export_epub_to_dict(epub_path, naming_method=None, verbose=True, interactive
             item_id=id,
             toc_map=toc_map,
             naming_method=naming_method,
-            verbose=verbose
+            verbose=verbose,
         )
 
-        if paragraphs and paragraphs != ['']:
-            # Clean paragraphs
+        if paragraphs and paragraphs != [""]:
             cleaned_paragraphs = [clean_text(p) for p in paragraphs if p.strip()]
-            chapters.append({
-                'title': chapter_title or f"Chapter {len(chapters) + 1}",
-                'paragraphs': cleaned_paragraphs,
-                'text': '\n\n'.join(cleaned_paragraphs)
-            })
+            chapters.append(
+                {
+                    "title": chapter_title or f"Chapter {len(chapters) + 1}",
+                    "paragraphs": cleaned_paragraphs,
+                    "text": "\n\n".join(cleaned_paragraphs),
+                }
+            )
 
     return {
-        'title': title,
-        'author': author,
-        'cover_image': cover_image,
-        'chapters': chapters
+        "title": title,
+        "author": author,
+        "cover_image": cover_image,
+        "chapters": chapters,
     }
 
 
-def export_epub(epub_path, output_path=None, naming_method=None, verbose=True, interactive=True):
+def export_epub(
+    epub_path: str | Path,
+    output_path: str | Path | None = None,
+    naming_method: str | None = None,
+    verbose: bool = True,
+    interactive: bool = True,
+) -> dict[str, Any]:
     """
     Export EPUB to a text file.
 
@@ -448,44 +465,45 @@ def export_epub(epub_path, output_path=None, naming_method=None, verbose=True, i
     Returns:
         dict: Same as export_epub_to_dict()
     """
+    epub_path_obj = Path(epub_path)
     if output_path is None:
-        output_path = epub_path.replace('.epub', '.txt')
+        output_path = epub_path_obj.with_suffix(".txt")
+    else:
+        output_path = Path(output_path)
 
-    # Get book data
     book_data = export_epub_to_dict(
         epub_path,
         naming_method=naming_method,
         verbose=verbose,
-        interactive=interactive
+        interactive=interactive,
     )
 
-    # Write to file
     if verbose:
         print(f"Exporting {epub_path} to {output_path}")
 
-    with open(output_path, "w", encoding='utf-8') as file:
+    with open(output_path, "w", encoding="utf-8") as file:
         file.write(f"Title: {book_data['title']}\n")
         file.write(f"Author: {book_data['author']}\n\n")
-        file.write(f"# Title\n")
+        file.write("# Title\n")
         file.write(f"{book_data['title']}, by {book_data['author']}\n\n")
 
-        for chapter in book_data['chapters']:
+        for chapter in book_data["chapters"]:
             file.write(f"# {chapter['title']}\n\n")
-            for paragraph in chapter['paragraphs']:
+            for paragraph in chapter["paragraphs"]:
                 file.write(f"{paragraph}\n\n")
 
-    # Save cover image if available
-    if book_data['cover_image']:
-        cover_path = epub_path.replace('.epub', '.png')
-        book_data['cover_image'].save(cover_path)
+    if book_data["cover_image"]:
+        cover_path = epub_path_obj.with_suffix(".png")
+        book_data["cover_image"].save(cover_path)
         if verbose:
             print(f"Cover image saved to {cover_path}")
 
     return book_data
 
 
-# Convenience function for backwards compatibility
-def export(book, sourcefile, naming_method=None):
+def export(
+    book: epub.EpubBook, sourcefile: str | Path, naming_method: str | None = None
+) -> list[dict[str, Any]]:
     """
     Legacy export function for backwards compatibility.
 
@@ -501,7 +519,6 @@ def export(book, sourcefile, naming_method=None):
         sourcefile,
         naming_method=naming_method,
         verbose=True,
-        interactive=(naming_method is None)
+        interactive=(naming_method is None),
     )
-    # Return in legacy format
-    return [{'title': ch['title'], 'paragraphs': ch['paragraphs']} for ch in book_data['chapters']]
+    return [{"title": ch["title"], "paragraphs": ch["paragraphs"]} for ch in book_data["chapters"]]
