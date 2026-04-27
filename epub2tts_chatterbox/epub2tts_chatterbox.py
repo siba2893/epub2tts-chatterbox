@@ -193,7 +193,12 @@ def read_book(book_contents, sample, notitles, exaggeration, cfg_weight, languag
             combined_paragraphs = combine_short_paragraphs(chapter["paragraphs"])
 
             for pindex, paragraph in enumerate(combined_paragraphs):
-                ptemp = f"pgraphs{pindex}.flac"
+                # Scope the paragraph filename by chapter index so a stale file
+                # left over from a previous chapter's cleanup window cannot be
+                # mistaken for this chapter's paragraph N (correctness fix for
+                # a narrow crash window between os.replace(partN) and the
+                # pgraphs cleanup loop below).
+                ptemp = f"pgraphs{i}_{pindex}.flac"
                 if os.path.isfile(ptemp):
                     logger.debug("%s exists, skipping to next paragraph", ptemp)
                 else:
