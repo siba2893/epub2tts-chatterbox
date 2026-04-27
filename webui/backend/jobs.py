@@ -8,6 +8,7 @@ reused unchanged; progress is parsed from the logger output line by line.
 from __future__ import annotations
 
 import asyncio
+import os
 import re
 import subprocess
 import sys
@@ -23,6 +24,11 @@ from .schemas import JobState, Settings
 
 JOBS_ROOT = Path(__file__).resolve().parent / "jobs"
 JOBS_ROOT.mkdir(parents=True, exist_ok=True)
+
+# Inject the project root onto PYTHONPATH so the subprocess always picks up
+# the local epub2tts_chatterbox source, not whatever stale copy may sit in
+# the venv's site-packages from a previous `pip install`.
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 
 @dataclass
@@ -184,6 +190,12 @@ def run_subprocess_blocking(job: Job, txt_path: Path) -> None:
     job.state = JobState.RUNNING
     job.emit({"type": "state", "state": job.state.value})
 
+    env = os.environ.copy()
+    existing = env.get("PYTHONPATH", "")
+    env["PYTHONPATH"] = (
+        f"{PROJECT_ROOT}{os.pathsep}{existing}" if existing else str(PROJECT_ROOT)
+    )
+
     try:
         proc = subprocess.Popen(
             argv,
@@ -192,6 +204,7 @@ def run_subprocess_blocking(job: Job, txt_path: Path) -> None:
             stderr=subprocess.STDOUT,
             text=True,
             bufsize=1,
+            env=env,
         )
         job.process = proc
     except FileNotFoundError as e:
@@ -229,12 +242,20 @@ def run_subprocess_blocking(job: Job, txt_path: Path) -> None:
     })
 
 
-def start_job(job: Job, txt_path: Path) -> None:
-    """Launch the conversion in a daemon thread."""
+def start_job(job: Job, txt_path: Path) -> bool:
+    """Launch the conversion in a daemon thread.
+
+    No-op when a subprocess is already alive for this job — prevents the
+    accidental restart loop you can hit by mashing the convert / re-render
+    buttons faster than the SSE stream catches up.
+    """
+    if job.process is not None and job.process.poll() is None:
+        return False
     t = threading.Thread(
         target=run_subprocess_blocking, args=(job, txt_path), daemon=True
     )
     t.start()
+    return True
 
 
 def cancel_job(job: Job) -> bool:

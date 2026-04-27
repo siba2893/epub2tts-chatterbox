@@ -222,6 +222,9 @@ def start(job_id: str, req: StartRequest) -> JobStatus:
     job = registry.get(job_id)
     if job is None:
         raise HTTPException(status_code=404, detail="Job not found")
+    if job.state == JobState.RUNNING and job.process and job.process.poll() is None:
+        # Already running — return current snapshot instead of spawning a duplicate.
+        return _job_status(job)
     txt_path = job.workdir / "book.txt"
     if not txt_path.exists():
         raise HTTPException(status_code=400, detail="No text file to convert")
@@ -381,6 +384,11 @@ def rerun_chapter(job_id: str, n: int) -> JobStatus:
     job = registry.get(job_id)
     if job is None:
         raise HTTPException(status_code=404, detail="Job not found")
+    if job.state == JobState.RUNNING and job.process and job.process.poll() is None:
+        raise HTTPException(
+            status_code=409,
+            detail="A conversion is already running. Cancel it before re-rendering.",
+        )
     flac = job.workdir / f"part{n}.flac"
     if flac.exists():
         flac.unlink()

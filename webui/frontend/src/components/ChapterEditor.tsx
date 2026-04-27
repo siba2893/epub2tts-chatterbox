@@ -21,6 +21,7 @@ const DEFAULT_SETTINGS: Settings = {
   cfg_weight: 0.4,
   retry_count: 3,
   language: "en",
+  notitles: false,
 };
 
 function loadSettings(): Settings {
@@ -42,7 +43,7 @@ export default function ChapterEditor({ jobId, onStarted }: Props) {
   const [active, setActive] = useState(0);
   const [busy, setBusy] = useState(false);
   const [settings, setSettings] = useState<Settings>(loadSettings());
-  const [showSettings, setShowSettings] = useState(false);
+  const [showSettings, setShowSettings] = useState(true);
 
   useEffect(() => {
     getText(jobId)
@@ -224,14 +225,13 @@ export default function ChapterEditor({ jobId, onStarted }: Props) {
         </div>
       </div>
 
+      <SampleBrowser
+        selected={settings.sample_path ?? null}
+        onSelect={(p) => setSettings({ ...settings, sample_path: p })}
+      />
+
       {showSettings && (
-        <div className="space-y-4">
-          <SettingsPanel value={settings} onChange={setSettings} />
-          <SampleBrowser
-            selected={settings.sample_path ?? null}
-            onSelect={(p) => setSettings({ ...settings, sample_path: p })}
-          />
-        </div>
+        <SettingsPanel value={settings} onChange={setSettings} />
       )}
 
       <div className="flex justify-end">
@@ -313,6 +313,18 @@ function SettingsPanel({
           value={value.language ?? "en"}
           onChange={(e) => set("language", e.target.value)}
         />
+      </div>
+      <div className="col-span-2 flex items-center gap-2 pt-2">
+        <input
+          id="notitles"
+          type="checkbox"
+          checked={value.notitles ?? false}
+          onChange={(e) => set("notitles", e.target.checked)}
+          className="h-4 w-4 rounded border-zinc-700 bg-zinc-950"
+        />
+        <label htmlFor="notitles" className="text-xs text-zinc-300 cursor-pointer">
+          skip reading chapter titles aloud (<span className="font-mono">--notitles</span>)
+        </label>
       </div>
     </div>
   );
