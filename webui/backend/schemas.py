@@ -80,6 +80,10 @@ class Settings(BaseModel):
     cover_path: str | None = None
     notitles: bool = False
     language: str = "en"
+    # Optional absolute path to a folder where the final .m4b will be copied
+    # after a successful run. Resume state (partN.flac etc.) stays in the
+    # per-job workdir regardless.
+    output_dir: str | None = None
 
 
 class StartRequest(BaseModel):

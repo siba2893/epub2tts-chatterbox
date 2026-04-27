@@ -50,6 +50,7 @@ export interface Settings {
   cover_path?: string | null;
   notitles?: boolean;
   language?: string;
+  output_dir?: string | null;
 }
 
 export interface JobStatus {

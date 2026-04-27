@@ -229,6 +229,17 @@ def start(job_id: str, req: StartRequest) -> JobStatus:
     if not txt_path.exists():
         raise HTTPException(status_code=400, detail="No text file to convert")
 
+    if req.settings.output_dir:
+        out = Path(req.settings.output_dir).expanduser()
+        if not out.exists() or not out.is_dir():
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Output folder does not exist or is not a directory: "
+                    f"{req.settings.output_dir}"
+                ),
+            )
+
     job.settings = req.settings
     start_job(job, txt_path)
     return _job_status(job)

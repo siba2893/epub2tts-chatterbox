@@ -181,6 +181,24 @@ class TestSamples:
         )
         assert r.status_code == 400
 
+    def test_start_rejects_missing_output_dir(self, client: TestClient, tmp_path):
+        # Upload + name first so a .txt exists.
+        with FIXTURE_EPUB.open("rb") as f:
+            r = client.post(
+                "/api/upload",
+                files={"file": ("sample.epub", f, "application/epub+zip")},
+            )
+        job_id = r.json()["job_id"]
+        client.post(f"/api/jobs/{job_id}/naming", json={"method": "toc"})
+
+        bogus = tmp_path / "does_not_exist"
+        r = client.post(
+            f"/api/jobs/{job_id}/start",
+            json={"settings": {"output_dir": str(bogus)}},
+        )
+        assert r.status_code == 400
+        assert "Output folder" in r.json()["detail"]
+
     def test_upload_and_round_trip_wav(self, client: TestClient, tmp_path):
         # Minimal 44-byte WAV header with no sample frames; enough to round-trip.
         wav_bytes = bytes.fromhex(

@@ -8,8 +8,10 @@ reused unchanged; progress is parsed from the logger output line by line.
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import re
+import shutil
 import subprocess
 import sys
 import threading
@@ -18,6 +20,8 @@ import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 from .schemas import JobState, Settings
 
@@ -229,6 +233,7 @@ def run_subprocess_blocking(job: Job, txt_path: Path) -> None:
     if rc == 0:
         job.state = JobState.DONE
         job.chapters_done = job.chapters_total
+        _maybe_copy_to_output_dir(job)
     elif job.state == JobState.CANCELLED:
         pass
     else:
@@ -240,6 +245,30 @@ def run_subprocess_blocking(job: Job, txt_path: Path) -> None:
         "error": job.error,
         "exit_code": rc,
     })
+
+
+def _maybe_copy_to_output_dir(job: Job) -> None:
+    """Copy the produced .m4b to ``settings.output_dir`` if one was supplied."""
+    target_dir = job.settings.output_dir
+    if not target_dir:
+        return
+    target = Path(target_dir).expanduser()
+    if not target.exists() or not target.is_dir():
+        msg = f"Output dir {target} does not exist; M4B kept in {job.workdir}"
+        logger.warning(msg)
+        job.emit({"type": "log", "raw": msg})
+        return
+    m4bs = list(job.workdir.glob("*.m4b"))
+    if not m4bs:
+        return
+    for m4b in m4bs:
+        dest = target / m4b.name
+        try:
+            shutil.copy2(m4b, dest)
+            job.emit({"type": "log", "raw": f"Copied {m4b.name} → {dest}"})
+        except OSError as e:
+            logger.warning("Failed to copy %s to %s: %s", m4b, dest, e)
+            job.emit({"type": "log", "raw": f"Copy failed: {e}"})
 
 
 def start_job(job: Job, txt_path: Path) -> bool:

@@ -314,6 +314,23 @@ function SettingsPanel({
           onChange={(e) => set("language", e.target.value)}
         />
       </div>
+      <div className="col-span-2">
+        <label className="label">
+          output folder{" "}
+          <span className="text-zinc-600 normal-case tracking-normal">
+            — absolute path on this machine; M4B will be copied here after
+            conversion. leave empty to keep it in the job workdir.
+          </span>
+        </label>
+        <input
+          className="input font-mono text-xs"
+          placeholder="C:\Users\you\Audiobooks   or   /home/you/Audiobooks"
+          value={value.output_dir ?? ""}
+          onChange={(e) =>
+            set("output_dir", e.target.value.trim() ? e.target.value : null)
+          }
+        />
+      </div>
       <div className="col-span-2 flex items-center gap-2 pt-2">
         <input
           id="notitles"
