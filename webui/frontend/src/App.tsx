@@ -3,8 +3,9 @@ import UploadCard from "./components/UploadCard";
 import NamingPreview from "./components/NamingPreview";
 import ChapterEditor from "./components/ChapterEditor";
 import JobProgress from "./components/JobProgress";
+import Library from "./components/Library";
 
-type Stage = "upload" | "naming" | "editing" | "running";
+type Stage = "upload" | "naming" | "editing" | "running" | "library";
 
 export default function App() {
   const [stage, setStage] = useState<Stage>("upload");
@@ -15,12 +16,38 @@ export default function App() {
     <div className="min-h-full flex flex-col">
       <header className="border-b border-zinc-900">
         <div className="max-w-3xl mx-auto px-6 py-5 flex items-baseline justify-between">
-          <h1 className="text-lg font-semibold tracking-tight">
+          <button
+            className="text-lg font-semibold tracking-tight hover:text-white"
+            onClick={() => {
+              setStage("upload");
+              setJobId(null);
+              setMeta(null);
+            }}
+          >
             epub2tts-chatterbox
-          </h1>
-          <span className="text-xs uppercase tracking-widest text-zinc-500">
-            web ui
-          </span>
+          </button>
+          <nav className="flex gap-5 text-xs uppercase tracking-widest">
+            <button
+              className={
+                stage !== "library"
+                  ? "text-zinc-200"
+                  : "text-zinc-500 hover:text-zinc-300"
+              }
+              onClick={() => setStage("upload")}
+            >
+              convert
+            </button>
+            <button
+              className={
+                stage === "library"
+                  ? "text-zinc-200"
+                  : "text-zinc-500 hover:text-zinc-300"
+              }
+              onClick={() => setStage("library")}
+            >
+              library
+            </button>
+          </nav>
         </div>
       </header>
 
@@ -49,6 +76,7 @@ export default function App() {
             />
           )}
           {stage === "running" && jobId && <JobProgress jobId={jobId} />}
+          {stage === "library" && <Library />}
         </div>
       </main>
 

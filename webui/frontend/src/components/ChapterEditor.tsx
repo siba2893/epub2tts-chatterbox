@@ -7,6 +7,7 @@ import {
   putText,
   startJob,
 } from "../api";
+import SampleBrowser from "./SampleBrowser";
 
 interface Props {
   jobId: string;
@@ -224,7 +225,13 @@ export default function ChapterEditor({ jobId, onStarted }: Props) {
       </div>
 
       {showSettings && (
-        <SettingsPanel value={settings} onChange={setSettings} />
+        <div className="space-y-4">
+          <SettingsPanel value={settings} onChange={setSettings} />
+          <SampleBrowser
+            selected={settings.sample_path ?? null}
+            onSelect={(p) => setSettings({ ...settings, sample_path: p })}
+          />
+        </div>
       )}
 
       <div className="flex justify-end">

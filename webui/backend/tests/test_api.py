@@ -121,3 +121,76 @@ class TestProgressParser:
     def test_error_line_classified(self):
         evt = parse_progress_line("ERROR: ffmpeg failed")
         assert evt is not None and evt["type"] == "error"
+
+
+class TestChaptersAndLibrary:
+    def test_chapters_endpoint_handles_empty_workdir(
+        self, client: TestClient, uploaded_job: str = ""
+    ):
+        # Create a fresh job — no partN.flac files yet.
+        with FIXTURE_EPUB.open("rb") as f:
+            r = client.post(
+                "/api/upload",
+                files={"file": ("sample.epub", f, "application/epub+zip")},
+            )
+        job_id = r.json()["job_id"]
+
+        r = client.get(f"/api/jobs/{job_id}/chapters")
+        assert r.status_code == 200
+        body = r.json()
+        assert body["job_id"] == job_id
+        assert body["completed"] == []
+
+    def test_chapter_audio_404_when_missing(self, client: TestClient):
+        with FIXTURE_EPUB.open("rb") as f:
+            r = client.post(
+                "/api/upload",
+                files={"file": ("sample.epub", f, "application/epub+zip")},
+            )
+        job_id = r.json()["job_id"]
+        assert client.get(f"/api/jobs/{job_id}/chapter/1/audio").status_code == 404
+
+    def test_library_returns_list(self, client: TestClient):
+        # Fresh test runs with no .m4b on disk produce an empty list, but the
+        # endpoint must always return JSON shaped as a list.
+        r = client.get("/api/library")
+        assert r.status_code == 200
+        assert isinstance(r.json(), list)
+
+
+class TestSamples:
+    def test_list_samples_initial(self, client: TestClient):
+        r = client.get("/api/samples")
+        assert r.status_code == 200
+        assert isinstance(r.json(), list)
+
+    def test_upload_rejects_bad_extension(self, client: TestClient):
+        r = client.post(
+            "/api/samples",
+            files={"file": ("notes.txt", b"hello", "text/plain")},
+        )
+        assert r.status_code == 400
+
+    def test_upload_and_round_trip_wav(self, client: TestClient, tmp_path):
+        # Minimal 44-byte WAV header with no sample frames; enough to round-trip.
+        wav_bytes = bytes.fromhex(
+            "52494646" "24000000" "57415645"  # RIFF/size/WAVE
+            "666d7420" "10000000" "01000100"  # fmt /size/PCM,1ch
+            "44ac0000" "88580100" "02001000"  # 44100Hz/byterate/block,16bit
+            "64617461" "00000000"             # data/0
+        )
+        r = client.post(
+            "/api/samples",
+            files={"file": ("smoke.wav", wav_bytes, "audio/wav")},
+        )
+        assert r.status_code == 200
+        assert r.json()["filename"] == "smoke.wav"
+
+        # Listing now contains it
+        names = [e["filename"] for e in client.get("/api/samples").json()]
+        assert "smoke.wav" in names
+
+        # Round-trip download
+        r = client.get("/api/samples/smoke.wav")
+        assert r.status_code == 200
+        assert r.content == wav_bytes

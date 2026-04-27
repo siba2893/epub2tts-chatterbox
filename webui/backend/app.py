@@ -10,8 +10,7 @@ from typing import Any
 
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
+from fastapi.responses import FileResponse, StreamingResponse
 
 # Allow `python -m epub2tts_chatterbox.epub_export` style imports from the
 # project root regardless of where uvicorn is launched.
@@ -314,11 +313,121 @@ def library() -> list[LibraryEntry]:
     entries: list[LibraryEntry] = []
     for job_dir in sorted(JOBS_ROOT.glob("*")):
         for m4b in sorted(job_dir.glob("*.m4b")):
+            title: str | None = m4b.stem
+            author: str | None = None
+            duration: float | None = None
+            try:
+                from mutagen import mp4 as _mp4
+
+                tags = _mp4.MP4(str(m4b))
+                if tags.tags:
+                    title = (tags.tags.get("\xa9nam") or [title])[0]
+                    author = (tags.tags.get("\xa9ART") or [None])[0]
+                if tags.info is not None:
+                    duration = float(tags.info.length)
+            except Exception:
+                pass
             entries.append(
                 LibraryEntry(
                     filename=str(m4b.relative_to(JOBS_ROOT)),
-                    title=m4b.stem,
+                    title=title,
+                    author=author,
+                    duration_seconds=duration,
                     size_bytes=m4b.stat().st_size,
                 )
             )
     return entries
+
+
+# ---------------------------------------------------------------------------
+# Per-chapter preview + re-render
+# ---------------------------------------------------------------------------
+
+@app.get("/api/jobs/{job_id}/chapters")
+def list_chapters(job_id: str) -> dict[str, Any]:
+    """Return on-disk chapter completion state for a job."""
+    job = registry.get(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Job not found")
+    parts = sorted(
+        job.workdir.glob("part*.flac"),
+        key=lambda p: int("".join(c for c in p.stem if c.isdigit()) or 0),
+    )
+    items = [
+        {
+            "index": int("".join(c for c in p.stem if c.isdigit()) or 0),
+            "size_bytes": p.stat().st_size,
+            "filename": p.name,
+        }
+        for p in parts
+    ]
+    return {"job_id": job_id, "completed": items, "total": job.chapters_total}
+
+
+@app.get("/api/jobs/{job_id}/chapter/{n}/audio")
+def chapter_audio(job_id: str, n: int):
+    job = registry.get(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Job not found")
+    flac = job.workdir / f"part{n}.flac"
+    if not flac.exists():
+        raise HTTPException(status_code=404, detail=f"part{n}.flac not on disk")
+    return FileResponse(str(flac), media_type="audio/flac", filename=flac.name)
+
+
+@app.post("/api/jobs/{job_id}/chapter/{n}/rerun", response_model=JobStatus)
+def rerun_chapter(job_id: str, n: int) -> JobStatus:
+    """Delete partN.flac and re-run; the resume logic skips all other chapters."""
+    job = registry.get(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Job not found")
+    flac = job.workdir / f"part{n}.flac"
+    if flac.exists():
+        flac.unlink()
+    txt_path = job.workdir / "book.txt"
+    if not txt_path.exists():
+        raise HTTPException(status_code=400, detail="No text file to convert")
+    start_job(job, txt_path)
+    return _job_status(job)
+
+
+# ---------------------------------------------------------------------------
+# Voice samples
+# ---------------------------------------------------------------------------
+
+SAMPLES_DIR = Path(__file__).resolve().parent / "samples"
+SAMPLES_DIR.mkdir(parents=True, exist_ok=True)
+
+
+@app.post("/api/samples")
+async def upload_sample(file: UploadFile = File(...)) -> dict[str, Any]:
+    if not file.filename or not file.filename.lower().endswith((".wav", ".mp3", ".flac")):
+        raise HTTPException(status_code=400, detail="Sample must be .wav, .mp3, or .flac")
+    safe_name = Path(file.filename).name
+    target = SAMPLES_DIR / safe_name
+    with target.open("wb") as f:
+        shutil.copyfileobj(file.file, f)
+    return {"filename": safe_name, "size_bytes": target.stat().st_size}
+
+
+@app.get("/api/samples")
+def list_samples() -> list[dict[str, Any]]:
+    return [
+        {
+            "filename": p.name,
+            "size_bytes": p.stat().st_size,
+            "url": f"/api/samples/{p.name}",
+            "path": str(p),
+        }
+        for p in sorted(SAMPLES_DIR.iterdir())
+        if p.is_file() and p.suffix.lower() in (".wav", ".mp3", ".flac")
+    ]
+
+
+@app.get("/api/samples/{name}")
+def get_sample(name: str):
+    safe = Path(name).name  # strip path components
+    target = SAMPLES_DIR / safe
+    if not target.exists():
+        raise HTTPException(status_code=404, detail="Sample not found")
+    return FileResponse(str(target), media_type="audio/wav", filename=safe)

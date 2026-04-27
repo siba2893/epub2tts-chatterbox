@@ -40,3 +40,9 @@ webui/backend/samples/
 # Smoke-test outputs
 tests/fixtures/*.m4b
 tests/fixtures/*.epub.txt
+
+# OMC runtime session/state (keep .omc/prd.json, ignore everything else)
+.omc/sessions/
+.omc/state/
+.omc/autopilot/
+.omc/plans/

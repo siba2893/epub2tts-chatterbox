@@ -6,6 +6,7 @@ import {
   getJob,
   subscribeEvents,
 } from "../api";
+import ChapterList from "./ChapterList";
 
 interface Props {
   jobId: string;
@@ -162,6 +163,13 @@ export default function JobProgress({ jobId }: Props) {
         >
           cancel
         </button>
+      </div>
+
+      <div>
+        <p className="text-xs uppercase tracking-widest text-zinc-500 mb-2">
+          completed chapters
+        </p>
+        <ChapterList jobId={jobId} live />
       </div>
     </section>
   );

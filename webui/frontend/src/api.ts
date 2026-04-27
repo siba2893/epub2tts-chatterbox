@@ -155,6 +155,77 @@ export type ProgressEvent =
   | { type: "log"; raw: string }
   | { type: "error"; raw: string };
 
+// ---------------------------------------------------------------------------
+// Voice samples
+// ---------------------------------------------------------------------------
+
+export interface VoiceSample {
+  filename: string;
+  size_bytes: number;
+  url: string;
+  path: string;
+}
+
+export async function listSamples(): Promise<VoiceSample[]> {
+  return json(await fetch(`${API}/api/samples`));
+}
+
+export async function uploadSample(
+  file: File
+): Promise<{ filename: string; size_bytes: number }> {
+  const fd = new FormData();
+  fd.append("file", file);
+  return json(await fetch(`${API}/api/samples`, { method: "POST", body: fd }));
+}
+
+// ---------------------------------------------------------------------------
+// Library + per-chapter
+// ---------------------------------------------------------------------------
+
+export interface LibraryEntry {
+  filename: string;
+  title: string | null;
+  author: string | null;
+  cover_url: string | null;
+  duration_seconds: number | null;
+  size_bytes: number;
+}
+
+export async function listLibrary(): Promise<LibraryEntry[]> {
+  return json(await fetch(`${API}/api/library`));
+}
+
+export interface ChapterFile {
+  index: number;
+  size_bytes: number;
+  filename: string;
+}
+
+export interface ChapterListing {
+  job_id: string;
+  completed: ChapterFile[];
+  total: number;
+}
+
+export async function listChapters(jobId: string): Promise<ChapterListing> {
+  return json(await fetch(`${API}/api/jobs/${jobId}/chapters`));
+}
+
+export function chapterAudioUrl(jobId: string, n: number): string {
+  return `${API}/api/jobs/${jobId}/chapter/${n}/audio`;
+}
+
+export async function rerunChapter(
+  jobId: string,
+  n: number
+): Promise<JobStatus> {
+  return json(
+    await fetch(`${API}/api/jobs/${jobId}/chapter/${n}/rerun`, {
+      method: "POST",
+    })
+  );
+}
+
 export function subscribeEvents(
   jobId: string,
   onEvent: (e: ProgressEvent) => void
