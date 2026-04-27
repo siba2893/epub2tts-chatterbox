@@ -5,6 +5,7 @@ import sys
 if sys.platform == 'darwin':
     os.environ['PYTORCH_ENABLE_MPS_FALLBACK'] = '1'
 import argparse
+import logging
 import time
 import numpy as np
 import re
@@ -15,6 +16,7 @@ import warnings
 from tqdm import tqdm
 import torchaudio as ta
 from chatterbox.tts import ChatterboxTTS
+from chatterbox.mtl_tts import ChatterboxMultilingualTTS
 
 from bs4 import BeautifulSoup
 import ebooklib
@@ -40,6 +42,13 @@ from epub2tts_chatterbox.epub_export import (
     preview_chapter_names,
     export,
 )
+from epub2tts_chatterbox.text_utils import (
+    combine_short_paragraphs,
+    combine_short_sentences,
+    conditional_sentence_case,
+    format_time_adaptive,
+    sort_key,
+)
 
 warnings.filterwarnings("ignore")
 
@@ -54,6 +63,21 @@ namespaces = {
 
 warnings.filterwarnings("ignore", module="ebooklib.epub")
 
+logger = logging.getLogger("epub2tts_chatterbox")
+
+
+def _setup_logging(verbose: bool = False, quiet: bool = False) -> None:
+    """Configure logging for the CLI. ``verbose`` enables DEBUG, ``quiet`` raises to WARNING."""
+    if quiet:
+        level = logging.WARNING
+    elif verbose:
+        level = logging.DEBUG
+    else:
+        level = logging.INFO
+    fmt = "%(asctime)s %(levelname)s %(message)s" if verbose else "%(message)s"
+    logging.basicConfig(level=level, format=fmt, force=True)
+
+
 def ensure_punkt():
     try:
         nltk.data.find("tokenizers/punkt")
@@ -63,32 +87,6 @@ def ensure_punkt():
         nltk.data.find("tokenizers/punkt_tab")
     except LookupError:
         nltk.download("punkt_tab")
-
-def conditional_sentence_case(sent):
-    # Split the sentence into words
-    words = sent.split()
-    length = len(words)
-    # Iterate through words to check for three consecutive uppercase words
-    for i in range(length - 2):
-        if words[i].isupper() and words[i+1].isupper() and words[i+2].isupper():
-            # Convert the entire sentence to lowercase and capitalize the first letter
-            sent = ' '.join(words).lower().capitalize()
-            break  # No need to continue checking once a match is found
-    return sent
-
-def format_time_adaptive(seconds):
-    """Format time in adaptive format, showing only relevant units."""
-    if seconds < 60:
-        return f"{int(seconds)}s"
-    elif seconds < 3600:
-        minutes = int(seconds // 60)
-        secs = int(seconds % 60)
-        return f"{minutes}m {secs}s"
-    else:
-        hours = int(seconds // 3600)
-        minutes = int((seconds % 3600) // 60)
-        return f"{hours}h {minutes}m"
-
 
 def get_book(sourcefile):
     book_contents = []
@@ -140,10 +138,6 @@ def get_book(sourcefile):
 
     return book_contents, book_title, book_author, chapter_titles
 
-def sort_key(s):
-    # extract number from the string
-    return int(re.findall(r'\d+', s)[0])
-
 def check_for_file(filename):
     if os.path.isfile(filename):
         print(f"The file '{filename}' already exists.")
@@ -155,9 +149,8 @@ def check_for_file(filename):
             os.remove(filename)
 
 def append_silence(tempfile, duration=1200):
-    # if temppfile does not exist, return
     if not os.path.isfile(tempfile):
-        print(f"File {tempfile} does not exist, skipping silence append.")
+        logger.warning("File %s does not exist, skipping silence append.", tempfile)
         return
     audio = AudioSegment.from_file(tempfile)
     # Create a silence segment
@@ -167,108 +160,35 @@ def append_silence(tempfile, duration=1200):
     # Save the combined audio back to file
     combined.export(tempfile, format="flac")
 
-def chatterbox_read(sentences, sample, filenames, model, exaggeration, cfg_weight):
+def chatterbox_read(sentences, sample, filenames, model, exaggeration, cfg_weight, language="en", max_attempts=3):
     for i, sent in enumerate(sentences):
         clean_sent = conditional_sentence_case(sent.strip())
-        max_attempts = 3
-        # This "try 3 times" loop is probably not needed, actual failure was from a torch recursive error that was fixed
         for attempt in range(1, max_attempts + 1):
             try:
                 if sample == "none":
-                    #print(f"Generating audio for sentence: {clean_sent}")
-                    wav = model.generate(clean_sent)
+                    if language != "en":
+                        wav = model.generate(clean_sent, language_id=language)
+                    else:
+                        wav = model.generate(clean_sent)
                 else:
-                    #print(f"Generating audio for sentence: {clean_sent}")
-                    # generate(self, text, repetition_penalty=1.2, min_p=0.05, top_p=1.0, audio_prompt_path=None, exaggeration=0.5, cfg_weight=0.5, temperature=0.8)
-                    wav = model.generate(clean_sent, audio_prompt_path=sample, exaggeration=exaggeration, cfg_weight=cfg_weight)
-                
-                #print(f"Saving audio to {filenames[i]}")
+                    if language != "en":
+                        wav = model.generate(clean_sent, audio_prompt_path=sample, language_id=language)
+                    else:
+                        wav = model.generate(clean_sent, audio_prompt_path=sample, exaggeration=exaggeration, cfg_weight=cfg_weight)
+
                 ta.save(filenames[i], wav, model.sr)
-                # confirm the file was created
                 if not os.path.isfile(filenames[i]):
                     raise FileNotFoundError(f"File {filenames[i]} was not created.")
-                break  # Success, exit retry loop
+                break
 
             except Exception as e:
                 if attempt < max_attempts:
-                    print(f"Attempt {attempt} failed for sentence '{clean_sent}': {e} -- Retrying...")
+                    logger.warning("Attempt %d failed for sentence %r: %s -- retrying...", attempt, clean_sent, e)
                 else:
-                    print(f"Failed to process sentence '{clean_sent}' after {max_attempts} attempts. Error: {e}")
+                    logger.error("Failed to process sentence %r after %d attempts: %s", clean_sent, max_attempts, e)
 
-def combine_short_paragraphs(paragraphs, min_words=6):
-    """
-    Combine paragraphs that consist of a single sentence <min_words with next paragraph.
-    """
-    if not paragraphs:
-        return []
-
-    result = []
-    i = 0
-
-    while i < len(paragraphs):
-        paragraph = paragraphs[i]
-
-        # Check if this is a single short sentence
-        sentences = sent_tokenize(paragraph)
-        if len(sentences) == 1 and len(paragraph.split()) < min_words:
-            # Combine with next paragraph if available
-            if i + 1 < len(paragraphs):
-                combined = paragraph + " " + paragraphs[i + 1]
-                result.append(combined)
-                i += 2  # Skip next paragraph
-            else:
-                # Last paragraph, just add it (will be merged later in sentence processing)
-                result.append(paragraph)
-                i += 1
-        else:
-            result.append(paragraph)
-            i += 1
-
-    return result
-
-def combine_short_sentences(sentences, min_words=6, keep_threshold=8):
-    """
-    Combine short sentences within a paragraph.
-    - Sentences with ≥keep_threshold words are left alone
-    - Shorter sentences are combined to reach min_words
-    """
-    if not sentences:
-        return []
-
-    result = []
-    current_chunk = ""
-
-    for i, sentence in enumerate(sentences):
-        word_count = len(sentence.split())
-
-        # If we have no current chunk, start one
-        if not current_chunk:
-            current_chunk = sentence
-            # If this sentence is long enough and it's not the last, emit it
-            if word_count >= keep_threshold and i < len(sentences) - 1:
-                result.append(current_chunk)
-                current_chunk = ""
-        else:
-            # Add to current chunk
-            current_chunk += " " + sentence
-
-        # Check if current chunk is ready to emit
-        chunk_words = len(current_chunk.split())
-        if chunk_words >= keep_threshold or (chunk_words >= min_words and i < len(sentences) - 1):
-            result.append(current_chunk)
-            current_chunk = ""
-
-    # Handle remaining chunk
-    if current_chunk:
-        if result and len(current_chunk.split()) < min_words:
-            # Merge with previous
-            result[-1] += " " + current_chunk
-        else:
-            result.append(current_chunk)
-
-    return result
-
-def read_book(book_contents, sample, notitles, exaggeration, cfg_weight):
+def read_book(book_contents, sample, notitles, exaggeration, cfg_weight, language="en",
+              paragraph_pause_ms=600, min_sentence_words=8, max_attempts=3):
     # Automatically detect the best available device
     if torch.cuda.is_available():
         device = "cuda"
@@ -277,32 +197,32 @@ def read_book(book_contents, sample, notitles, exaggeration, cfg_weight):
     else:
         device = "cpu"
     current_device = torch.device(device)
-    print(f"Attempting to use device: {device}")
-    model = ChatterboxTTS.from_pretrained(device=device)
+    logger.info("Attempting to use device: %s", device)
 
-    # Initialize timing and progress tracking
+    use_multilingual = language != "en"
+    if use_multilingual:
+        logger.info("Loading ChatterboxMultilingualTTS for language: %s", language)
+        model = ChatterboxMultilingualTTS.from_pretrained(device=device)
+    else:
+        model = ChatterboxTTS.from_pretrained(device=device)
+
     start_time = time.time()
     total_chars = sum(len(''.join(chapter['paragraphs'])) for chapter in book_contents)
     processed_chars = 0
 
     segments = []
     for i, chapter in enumerate(book_contents, start=1):
-        paragraphpause = 600  # default pause between paragraphs in ms
         files = []
         partname = f"part{i}.flac"
-        print(f"\n\n")
 
         if os.path.isfile(partname):
-            print(f"{partname} exists, skipping to next chapter")
+            logger.info("%s exists, skipping to next chapter", partname)
             segments.append(partname)
-            # Track characters even for skipped chapters
             processed_chars += len(''.join(chapter['paragraphs']))
         else:
-            # Calculate timing info before processing this chapter
             elapsed_time = time.time() - start_time
             elapsed_str = format_time_adaptive(elapsed_time)
 
-            # Calculate ETA based on text processed
             if processed_chars > 0:
                 time_per_char = elapsed_time / processed_chars
                 remaining_chars = total_chars - processed_chars
@@ -312,45 +232,38 @@ def read_book(book_contents, sample, notitles, exaggeration, cfg_weight):
             else:
                 timing_info = f" | Elapsed: {elapsed_str}"
 
-            print(f"Chapter ({i}/{len(book_contents)}): {chapter['title']}{timing_info}\n")
-            print(f"Section name: \"{chapter['title']}\"")
+            logger.info("Chapter (%d/%d): %s%s", i, len(book_contents), chapter['title'], timing_info)
             if chapter["title"] == "":
                 chapter["title"] = "blank"
             if chapter["title"] != "Title" and notitles != True:
                 chapter['paragraphs'][0] = chapter['title'] + ". " + chapter['paragraphs'][0]
 
-            # Combine short paragraphs first
             combined_paragraphs = combine_short_paragraphs(chapter["paragraphs"])
 
             for pindex, paragraph in enumerate(combined_paragraphs):
                 ptemp = f"pgraphs{pindex}.flac"
                 if os.path.isfile(ptemp):
-                    print(f"{ptemp} exists, skipping to next paragraph")
+                    logger.debug("%s exists, skipping to next paragraph", ptemp)
                 else:
                     sentences = sent_tokenize(paragraph)
-                    # Combine short sentences within the paragraph
-                    sentences = combine_short_sentences(sentences)
+                    sentences = combine_short_sentences(sentences, keep_threshold=min_sentence_words)
                     filenames = [
                         "sntnc" + str(z) + ".wav" for z in range(len(sentences))
                     ]
-                    chatterbox_read(sentences, sample, filenames, model, exaggeration, cfg_weight)
-                    append_silence(filenames[-1], paragraphpause)
-                    # combine sentences in paragraph
+                    chatterbox_read(sentences, sample, filenames, model, exaggeration, cfg_weight, language, max_attempts=max_attempts)
+                    append_silence(filenames[-1], paragraph_pause_ms)
                     sorted_files = sorted(filenames, key=sort_key)
-                    #if os.path.exists("sntnc0.wav"):
-                    #    sorted_files.insert(0, "sntnc0.wav")
                     combined = AudioSegment.empty()
                     for file in sorted_files:
-                        # try/except prob not needed, actual failure was from a torch recursive error that was fixed
                         try:
                             combined += AudioSegment.from_file(file)
-                        except:
-                            print("FAILURE at sorted file combine")
-                            print(f"File: {file}")
-                            print(f"sorted files: {sorted_files}")
-                            print(f"Unsorted: {filenames}")
-                            sys.exit()
-                    combined.export(ptemp, format="flac")
+                        except (OSError, FileNotFoundError, RuntimeError) as e:
+                            logger.error("FAILURE at sorted file combine for %s (sorted=%s, unsorted=%s): %s",
+                                         file, sorted_files, filenames, e)
+                            sys.exit(1)
+                    ptemp_tmp = ptemp + ".tmp"
+                    combined.export(ptemp_tmp, format="flac")
+                    os.replace(ptemp_tmp, ptemp)
                     for file in sorted_files:
                         os.remove(file)
                 files.append(ptemp)
@@ -359,7 +272,9 @@ def read_book(book_contents, sample, notitles, exaggeration, cfg_weight):
             combined = AudioSegment.empty()
             for file in files:
                 combined += AudioSegment.from_file(file)
-            combined.export(partname, format="flac")
+            partname_tmp = partname + ".tmp"
+            combined.export(partname_tmp, format="flac")
+            os.replace(partname_tmp, partname)
             for file in files:
                 os.remove(file)
             segments.append(partname)
@@ -391,6 +306,21 @@ def get_duration(file_path):
     duration_milliseconds = len(audio)
     return duration_milliseconds
 
+def _run_ffmpeg(cmd, step_description):
+    """Run an ffmpeg subprocess and surface a clear error if it fails."""
+    try:
+        return subprocess.run(cmd, capture_output=True, text=True, check=True)
+    except FileNotFoundError as e:
+        logger.error("ffmpeg not found on PATH while trying to %s.", step_description)
+        raise SystemExit(1) from e
+    except subprocess.CalledProcessError as e:
+        logger.error("ffmpeg failed during step '%s' (exit %d).", step_description, e.returncode)
+        if e.stderr:
+            tail = "\n".join(e.stderr.strip().splitlines()[-20:])
+            logger.error("ffmpeg stderr (last 20 lines):\n%s", tail)
+        raise SystemExit(1) from e
+
+
 def make_m4b(files, sourcefile, speaker):
     filelist = "filelist.txt"
     speaker_file = os.path.basename(speaker)
@@ -417,7 +347,7 @@ def make_m4b(files, sourcefile, speaker):
         "-2",
         outputm4a,
     ]
-    subprocess.run(ffmpeg_command)
+    _run_ffmpeg(ffmpeg_command, "concat to m4a")
     ffmpeg_command = [
         "ffmpeg",
         "-i",
@@ -430,7 +360,7 @@ def make_m4b(files, sourcefile, speaker):
         "aac",
         outputm4b,
     ]
-    subprocess.run(ffmpeg_command)
+    _run_ffmpeg(ffmpeg_command, "encode m4b with metadata")
     os.remove(filelist)
     os.remove("FFMETADATAFILE")
     os.remove(outputm4a)
@@ -439,16 +369,19 @@ def make_m4b(files, sourcefile, speaker):
     return outputm4b
 
 def add_cover(cover_img, filename):
+    if not cover_img:
+        return
+    if not os.path.isfile(cover_img):
+        logger.warning("Cover image %s not found", cover_img)
+        return
     try:
-        if os.path.isfile(cover_img):
-            m4b = mp4.MP4(filename)
-            cover_image = open(cover_img, "rb").read()
-            m4b["covr"] = [mp4.MP4Cover(cover_image)]
-            m4b.save()
-        else:
-            print(f"Cover image {cover_img} not found")
-    except:
-        print(f"Cover image {cover_img} not found")
+        m4b = mp4.MP4(filename)
+        with open(cover_img, "rb") as f:
+            cover_image = f.read()
+        m4b["covr"] = [mp4.MP4Cover(cover_image)]
+        m4b.save()
+    except (OSError, mp4.MP4StreamInfoError) as e:
+        logger.warning("Failed to embed cover image %s: %s", cover_img, e)
 
 def validate_text_file(sourcefile, book_title, book_author, book_contents):
     """
@@ -485,20 +418,22 @@ def validate_text_file(sourcefile, book_title, book_author, book_contents):
     if not has_chapter_break:
         errors.append("- Missing at least one chapter break line starting with '#'")
 
-    # If there are any errors, display them and exit
     if errors:
-        print("\n" + "="*70)
-        print("ERROR: Text file validation failed")
-        print("="*70)
-        print("\nThe text file must contain the following elements:\n")
-        print("1. A 'Title:' line at the beginning (e.g., 'Title: My Book')")
-        print("2. An 'Author:' line at the beginning (e.g., 'Author: John Doe')")
-        print("3. At least one chapter break line starting with '#' (e.g., '# Chapter 1')")
-        print("\nMissing elements:")
-        for error in errors:
-            print(error)
-        print("\nPlease correct the text file format and try again.")
-        print("="*70 + "\n")
+        bar = "=" * 70
+        message = (
+            f"\n{bar}\n"
+            "ERROR: Text file validation failed\n"
+            f"{bar}\n\n"
+            "The text file must contain the following elements:\n\n"
+            "1. A 'Title:' line at the beginning (e.g., 'Title: My Book')\n"
+            "2. An 'Author:' line at the beginning (e.g., 'Author: John Doe')\n"
+            "3. At least one chapter break line starting with '#' (e.g., '# Chapter 1')\n\n"
+            "Missing elements:\n"
+            + "\n".join(errors) + "\n\n"
+            "Please correct the text file format and try again.\n"
+            f"{bar}"
+        )
+        logger.error(message)
         sys.exit(1)
 
 def main():
@@ -541,27 +476,64 @@ def main():
         default=None,
         help="Chapter naming method: auto (default, shows preview), toc, heading, class, or fallback",
     )
+    parser.add_argument(
+        "--language",
+        type=str,
+        default="en",
+        help=(
+            "Language code for multilingual TTS (default: en). "
+            "When set to anything other than 'en', uses ChatterboxMultilingualTTS. "
+            "Supported: ar, da, de, el, en, es, fi, fr, he, hi, it, ja, ko, ms, nl, no, pl, pt, ru, sv, sw, tr, zh"
+        ),
+    )
+    parser.add_argument(
+        "--paragraph-pause-ms",
+        type=int,
+        default=600,
+        help="Silence inserted between paragraphs, in milliseconds (default: 600)",
+    )
+    parser.add_argument(
+        "--min-sentence-words",
+        type=int,
+        default=8,
+        help="Sentences with at least this many words pass through alone; shorter ones are merged (default: 8)",
+    )
+    parser.add_argument(
+        "--retry-count",
+        type=int,
+        default=3,
+        help="Number of times to retry a sentence if TTS generation fails (default: 3)",
+    )
+    verbosity = parser.add_mutually_exclusive_group()
+    verbosity.add_argument("-v", "--verbose", action="store_true", help="Enable DEBUG logging")
+    verbosity.add_argument("-q", "--quiet", action="store_true", help="Only log warnings and errors")
 
     args = parser.parse_args()
-    print(args)
+    _setup_logging(verbose=args.verbose, quiet=args.quiet)
+    logger.debug("Parsed args: %s", args)
 
     ensure_punkt()
 
-    #If we get an epub, export that to txt file, then exit
     if args.sourcefile.endswith(".epub"):
         book = epub.read_epub(args.sourcefile)
         export(book, args.sourcefile, naming_method=args.naming)
-        exit()
+        return
 
     book_contents, book_title, book_author, chapter_titles = get_book(args.sourcefile)
 
-    # Validate the text file before proceeding
     validate_text_file(args.sourcefile, book_title, book_author, book_contents)
-    if args.sample is not None:
-        sample = args.sample
-    else:
-        sample = "none"
-    files = read_book(book_contents, sample, args.notitles, args.exaggeration, args.cfg_weight)
+    sample = args.sample if args.sample is not None else "none"
+    files = read_book(
+        book_contents,
+        sample,
+        args.notitles,
+        args.exaggeration,
+        args.cfg_weight,
+        args.language,
+        paragraph_pause_ms=args.paragraph_pause_ms,
+        min_sentence_words=args.min_sentence_words,
+        max_attempts=args.retry_count,
+    )
     generate_metadata(files, book_author, book_title, chapter_titles)
     m4bfilename = make_m4b(files, args.sourcefile, sample)
     add_cover(args.cover, m4bfilename)

@@ -1,0 +1,12 @@
+Title: Smoke Test Book
+Author: Test Author
+
+# The First Chapter
+
+The morning light spilled across the wooden floor in long golden ribbons, slow and patient and warm. Somewhere outside, a single bird was rehearsing the same three notes over and over.
+
+She set down her cup, listened for a moment, and then opened the book to the first page.
+
+# A Brief Second Chapter
+
+There was nothing else to say. The story had already begun without her.
