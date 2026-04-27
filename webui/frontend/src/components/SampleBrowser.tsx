@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { VoiceSample, listSamples, uploadSample } from "../api";
+import { VoiceSample, deleteSample, listSamples, uploadSample } from "../api";
 
 interface Props {
   selected: string | null;
@@ -29,6 +29,17 @@ export default function SampleBrowser({ selected, onSelect }: Props) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function handleDelete(s: VoiceSample) {
+    if (!window.confirm(`Delete "${s.filename}"?`)) return;
+    try {
+      await deleteSample(s.filename);
+      if (selected === s.path) onSelect(null);
+      refresh();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
     }
   }
 
@@ -96,6 +107,17 @@ export default function SampleBrowser({ selected, onSelect }: Props) {
                   preload="none"
                   className="h-6 max-w-[180px]"
                 />
+                <button
+                  className={`text-[10px] uppercase tracking-wider px-2 py-1 rounded transition-colors ${
+                    active
+                      ? "text-zinc-700 hover:text-red-600"
+                      : "text-zinc-500 hover:text-red-400"
+                  }`}
+                  onClick={() => handleDelete(s)}
+                  title={`delete ${s.filename}`}
+                >
+                  ✕
+                </button>
               </li>
             );
           })}

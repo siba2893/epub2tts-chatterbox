@@ -6,11 +6,21 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
+from webui.backend import app as app_module
 from webui.backend.app import app
 from webui.backend.jobs import parse_progress_line
 
 
 FIXTURE_EPUB = Path(__file__).resolve().parents[3] / "tests" / "fixtures" / "sample.epub"
+
+
+@pytest.fixture(autouse=True)
+def _isolate_samples_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """Redirect sample uploads to a per-test tmp dir so tests can't leak files."""
+    tmp_samples = tmp_path / "samples"
+    tmp_samples.mkdir()
+    monkeypatch.setattr(app_module, "SAMPLES_DIR", tmp_samples)
+    return tmp_samples
 
 
 @pytest.fixture(scope="module")

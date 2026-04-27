@@ -439,3 +439,13 @@ def get_sample(name: str):
     if not target.exists():
         raise HTTPException(status_code=404, detail="Sample not found")
     return FileResponse(str(target), media_type="audio/wav", filename=safe)
+
+
+@app.delete("/api/samples/{name}")
+def delete_sample(name: str) -> dict[str, Any]:
+    safe = Path(name).name
+    target = SAMPLES_DIR / safe
+    if not target.exists():
+        raise HTTPException(status_code=404, detail="Sample not found")
+    target.unlink()
+    return {"deleted": safe}

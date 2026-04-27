@@ -178,6 +178,14 @@ export async function uploadSample(
   return json(await fetch(`${API}/api/samples`, { method: "POST", body: fd }));
 }
 
+export async function deleteSample(name: string): Promise<{ deleted: string }> {
+  return json(
+    await fetch(`${API}/api/samples/${encodeURIComponent(name)}`, {
+      method: "DELETE",
+    })
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Library + per-chapter
 // ---------------------------------------------------------------------------
