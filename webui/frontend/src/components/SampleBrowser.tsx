@@ -24,7 +24,12 @@ export default function SampleBrowser({ selected, onSelect }: Props) {
     setError(null);
     try {
       await uploadSample(file);
-      refresh();
+      // Auto-select the new sample so users don't have to remember
+      // a separate "click filename to select" step.
+      const fresh = await listSamples();
+      setSamples(fresh);
+      const justUploaded = fresh.find((s) => s.filename === file.name);
+      if (justUploaded) onSelect(justUploaded.path);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -43,6 +48,7 @@ export default function SampleBrowser({ selected, onSelect }: Props) {
     }
   }
 
+  const selectedSample = samples.find((s) => s.path === selected);
   return (
     <div className="surface-muted p-4 space-y-3">
       <div className="flex items-center justify-between">
@@ -75,6 +81,24 @@ export default function SampleBrowser({ selected, onSelect }: Props) {
         </div>
       </div>
 
+      <div className="text-xs">
+        {selectedSample ? (
+          <span className="text-zinc-300">
+            <span className="text-zinc-500">selected: </span>
+            <span className="font-mono text-emerald-300">
+              {selectedSample.filename}
+            </span>
+          </span>
+        ) : samples.length > 0 ? (
+          <span className="text-amber-300">
+            no sample selected — the model will use its default voice. click a
+            row below to pick one.
+          </span>
+        ) : (
+          <span className="text-zinc-500">no sample selected</span>
+        )}
+      </div>
+
       {error && <p className="text-xs text-red-400">{error}</p>}
 
       {samples.length === 0 ? (
@@ -88,10 +112,15 @@ export default function SampleBrowser({ selected, onSelect }: Props) {
             return (
               <li
                 key={s.filename}
-                className={`flex items-center gap-3 px-2 py-1.5 rounded transition-colors ${
-                  active ? "bg-zinc-100 text-zinc-950" : "hover:bg-zinc-800"
+                className={`flex items-center gap-3 px-2 py-1.5 rounded transition-colors border ${
+                  active
+                    ? "bg-zinc-100 text-zinc-950 border-emerald-400"
+                    : "hover:bg-zinc-800 border-transparent"
                 }`}
               >
+                <span className="w-4 text-emerald-500 text-sm flex-shrink-0">
+                  {active ? "✓" : ""}
+                </span>
                 <button
                   className={`text-left text-xs flex-1 truncate ${
                     active ? "" : "text-zinc-200"

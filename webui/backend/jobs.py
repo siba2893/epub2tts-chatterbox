@@ -200,6 +200,10 @@ def run_subprocess_blocking(job: Job, txt_path: Path) -> None:
         f"{PROJECT_ROOT}{os.pathsep}{existing}" if existing else str(PROJECT_ROOT)
     )
 
+    # Surface the resolved argv into the SSE log so the user can confirm
+    # that --sample / --cover / etc. actually made it onto the command line.
+    job.emit({"type": "log", "raw": "argv: " + " ".join(repr(a) for a in argv)})
+
     try:
         proc = subprocess.Popen(
             argv,
