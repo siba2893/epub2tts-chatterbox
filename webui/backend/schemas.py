@@ -108,3 +108,11 @@ class LibraryEntry(BaseModel):
 class HealthResponse(BaseModel):
     status: Literal["ok"] = "ok"
     version: str = "1.0.0"
+
+
+class VoiceTestRequest(BaseModel):
+    text: str
+    sample_path: str | None = None
+    exaggeration: float = 0.7
+    cfg_weight: float = 0.4
+    language: str = "en"

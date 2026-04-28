@@ -228,6 +228,11 @@ export default function ChapterEditor({ jobId, onStarted }: Props) {
       <SampleBrowser
         selected={settings.sample_path ?? null}
         onSelect={(p) => setSettings({ ...settings, sample_path: p })}
+        testSettings={{
+          exaggeration: settings.exaggeration,
+          cfg_weight: settings.cfg_weight,
+          language: settings.language,
+        }}
       />
 
       {showSettings && (

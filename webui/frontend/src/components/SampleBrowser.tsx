@@ -1,15 +1,19 @@
 import { useEffect, useRef, useState } from "react";
-import { VoiceSample, deleteSample, listSamples, uploadSample } from "../api";
+import { Settings, VoiceSample, deleteSample, listSamples, uploadSample } from "../api";
+import VoiceTestPanel from "./VoiceTestPanel";
 
 interface Props {
   selected: string | null;
   onSelect: (path: string | null) => void;
+  /** Subset of the editor's settings that the voice-test should inherit. */
+  testSettings: Pick<Settings, "exaggeration" | "cfg_weight" | "language">;
 }
 
-export default function SampleBrowser({ selected, onSelect }: Props) {
+export default function SampleBrowser({ selected, onSelect, testSettings }: Props) {
   const [samples, setSamples] = useState<VoiceSample[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [testing, setTesting] = useState<VoiceSample | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
 
   function refresh() {
@@ -139,6 +143,17 @@ export default function SampleBrowser({ selected, onSelect }: Props) {
                 <button
                   className={`text-[10px] uppercase tracking-wider px-2 py-1 rounded transition-colors ${
                     active
+                      ? "text-zinc-800 hover:text-emerald-700"
+                      : "text-zinc-400 hover:text-emerald-300"
+                  }`}
+                  onClick={() => setTesting(s)}
+                  title="generate a paragraph in this voice"
+                >
+                  try
+                </button>
+                <button
+                  className={`text-[10px] uppercase tracking-wider px-2 py-1 rounded transition-colors ${
+                    active
                       ? "text-zinc-700 hover:text-red-600"
                       : "text-zinc-500 hover:text-red-400"
                   }`}
@@ -151,6 +166,15 @@ export default function SampleBrowser({ selected, onSelect }: Props) {
             );
           })}
         </ul>
+      )}
+
+      {testing && (
+        <VoiceTestPanel
+          samplePath={testing.path}
+          sampleFilename={testing.filename}
+          settings={testSettings}
+          onClose={() => setTesting(null)}
+        />
       )}
     </div>
   );

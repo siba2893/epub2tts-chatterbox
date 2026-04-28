@@ -187,6 +187,28 @@ export async function deleteSample(name: string): Promise<{ deleted: string }> {
   );
 }
 
+export interface VoiceTestResult {
+  filename: string;
+  url: string;
+  size_bytes: number;
+}
+
+export async function voiceTest(input: {
+  text: string;
+  sample_path?: string | null;
+  exaggeration?: number;
+  cfg_weight?: number;
+  language?: string;
+}): Promise<VoiceTestResult> {
+  return json(
+    await fetch(`${API}/api/voice-test`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(input),
+    })
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Library + per-chapter
 // ---------------------------------------------------------------------------

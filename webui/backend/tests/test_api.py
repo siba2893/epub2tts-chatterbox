@@ -181,6 +181,26 @@ class TestSamples:
         )
         assert r.status_code == 400
 
+    def test_voice_test_rejects_empty_text(self, client: TestClient):
+        r = client.post("/api/voice-test", json={"text": "   "})
+        assert r.status_code == 400
+
+    def test_voice_test_rejects_overlong_text(self, client: TestClient):
+        r = client.post("/api/voice-test", json={"text": "x" * 2500})
+        assert r.status_code == 400
+
+    def test_voice_test_rejects_path_outside_samples(
+        self, client: TestClient, tmp_path
+    ):
+        bogus = tmp_path / "evil.wav"
+        bogus.write_bytes(b"\0\0\0\0")
+        r = client.post(
+            "/api/voice-test",
+            json={"text": "hi there", "sample_path": str(bogus)},
+        )
+        assert r.status_code == 400
+        assert "uploaded sample" in r.json()["detail"]
+
     def test_start_rejects_missing_output_dir(self, client: TestClient, tmp_path):
         # Upload + name first so a .txt exists.
         with FIXTURE_EPUB.open("rb") as f:

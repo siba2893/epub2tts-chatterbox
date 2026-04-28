@@ -3,8 +3,11 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import shutil
+import subprocess
 import sys
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -26,7 +29,7 @@ from epub2tts_chatterbox.epub_export import (  # noqa: E402
 from epub2tts_chatterbox.text_utils import get_book  # noqa: E402
 from ebooklib import epub  # noqa: E402
 
-from .jobs import JOBS_ROOT, cancel_job, registry, resume_state, start_job
+from .jobs import JOBS_ROOT, PROJECT_ROOT, cancel_job, registry, resume_state, start_job
 from .schemas import (
     ChapterPreviewResponse,
     ChapterPreviewRow,
@@ -40,6 +43,7 @@ from .schemas import (
     StartRequest,
     TextDocument,
     UploadResponse,
+    VoiceTestRequest,
 )
 
 
@@ -460,3 +464,103 @@ def delete_sample(name: str) -> dict[str, Any]:
         raise HTTPException(status_code=404, detail="Sample not found")
     target.unlink()
     return {"deleted": safe}
+
+
+# ---------------------------------------------------------------------------
+# Voice test (single paragraph preview)
+# ---------------------------------------------------------------------------
+
+VOICE_TEST_DIR = Path(__file__).resolve().parent / "voice_tests"
+VOICE_TEST_DIR.mkdir(parents=True, exist_ok=True)
+
+
+@app.post("/api/voice-test")
+def voice_test(req: VoiceTestRequest) -> dict[str, Any]:
+    """Synthesize a single paragraph with Chatterbox and return a playback URL.
+
+    Synchronous endpoint — first call may take a minute or so while the model
+    loads / downloads on the chosen device. Subsequent calls reuse the cached
+    weights and finish in seconds.
+    """
+    text = (req.text or "").strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="text must be non-empty")
+    if len(text) > 2000:
+        raise HTTPException(status_code=400, detail="text must be ≤ 2000 chars")
+
+    sample_arg: str | None = None
+    if req.sample_path:
+        sample = Path(req.sample_path).expanduser().resolve()
+        # Defense in depth: only allow samples that live inside SAMPLES_DIR,
+        # since the path comes from a JSON body that the user controls.
+        try:
+            sample.relative_to(SAMPLES_DIR.resolve())
+        except ValueError:
+            raise HTTPException(
+                status_code=400,
+                detail="sample_path must reference an uploaded sample",
+            )
+        if not sample.exists():
+            raise HTTPException(status_code=404, detail="Sample file not found")
+        sample_arg = str(sample)
+
+    out_path = VOICE_TEST_DIR / f"{uuid.uuid4().hex[:12]}.wav"
+    argv: list[str] = [
+        sys.executable,
+        "-u",
+        "-m",
+        "webui.backend.voice_test_runner",
+        "--text",
+        text,
+        "--out",
+        str(out_path),
+        "--exaggeration",
+        str(req.exaggeration),
+        "--cfg-weight",
+        str(req.cfg_weight),
+        "--language",
+        req.language or "en",
+    ]
+    if sample_arg:
+        argv += ["--sample", sample_arg]
+
+    env = os.environ.copy()
+    existing = env.get("PYTHONPATH", "")
+    env["PYTHONPATH"] = (
+        f"{PROJECT_ROOT}{os.pathsep}{existing}" if existing else str(PROJECT_ROOT)
+    )
+
+    try:
+        result = subprocess.run(
+            argv,
+            capture_output=True,
+            text=True,
+            timeout=600,
+            env=env,
+        )
+    except subprocess.TimeoutExpired:
+        raise HTTPException(status_code=504, detail="Voice test timed out (10 min)")
+
+    if result.returncode != 0:
+        tail = "\n".join((result.stderr or result.stdout or "").splitlines()[-15:])
+        raise HTTPException(
+            status_code=500,
+            detail=f"Voice test failed (exit {result.returncode}):\n{tail}",
+        )
+    if not out_path.exists():
+        raise HTTPException(status_code=500, detail="Voice test produced no audio")
+
+    return {
+        "filename": out_path.name,
+        "url": f"/api/voice-test/{out_path.name}",
+        "size_bytes": out_path.stat().st_size,
+    }
+
+
+@app.get("/api/voice-test/{name}")
+def get_voice_test(name: str):
+    safe = Path(name).name
+    target = VOICE_TEST_DIR / safe
+    if not target.exists():
+        raise HTTPException(status_code=404, detail="Voice test audio not found")
+    return FileResponse(str(target), media_type="audio/wav", filename=safe)
