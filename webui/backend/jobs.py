@@ -165,6 +165,8 @@ def build_cli_command(workdir: Path, txt_path: Path, settings: Settings) -> list
         "-m",
         "epub2tts_chatterbox.epub2tts_chatterbox",
         str(txt_path),
+        "--engine",
+        settings.engine,
         "--paragraph-pause-ms",
         str(settings.paragraph_pause_ms),
         "--min-sentence-words",

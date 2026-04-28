@@ -6,7 +6,7 @@ interface Props {
   selected: string | null;
   onSelect: (path: string | null) => void;
   /** Subset of the editor's settings that the voice-test should inherit. */
-  testSettings: Pick<Settings, "exaggeration" | "cfg_weight" | "language">;
+  testSettings: Pick<Settings, "engine" | "exaggeration" | "cfg_weight" | "language">;
 }
 
 export default function SampleBrowser({ selected, onSelect, testSettings }: Props) {

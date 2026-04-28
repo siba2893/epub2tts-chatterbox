@@ -520,6 +520,8 @@ def voice_test(req: VoiceTestRequest) -> dict[str, Any]:
         str(req.cfg_weight),
         "--language",
         req.language or "en",
+        "--engine",
+        req.engine,
     ]
     if sample_arg:
         argv += ["--sample", sample_arg]

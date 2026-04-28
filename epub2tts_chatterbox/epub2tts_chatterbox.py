@@ -112,23 +112,59 @@ def append_silence(tempfile, duration=1200):
     # Save the combined audio back to file
     combined.export(tempfile, format="flac")
 
-def chatterbox_read(sentences, sample, filenames, model, exaggeration, cfg_weight, language="en", max_attempts=3):
+def _generate_chatterbox(model, sent, sample, language, exaggeration, cfg_weight):
+    """Synthesize a single sentence with Chatterbox; returns (wav, sample_rate)."""
+    if sample == "none":
+        if language != "en":
+            return model.generate(sent, language_id=language), model.sr
+        return model.generate(sent), model.sr
+    if language != "en":
+        return model.generate(sent, audio_prompt_path=sample, language_id=language), model.sr
+    return (
+        model.generate(sent, audio_prompt_path=sample, exaggeration=exaggeration, cfg_weight=cfg_weight),
+        model.sr,
+    )
+
+
+def _generate_xtts(model, sent, sample, language):
+    """Synthesize a single sentence with XTTS v2; returns (wav, sample_rate=24000)."""
+    if sample == "none":
+        raise RuntimeError("XTTS v2 requires --sample (a voice sample to clone from)")
+    wav = model.tts(text=sent, speaker_wav=sample, language=language)
+    return wav, 24000
+
+
+def synthesize_paragraph(
+    sentences,
+    sample,
+    filenames,
+    model,
+    exaggeration,
+    cfg_weight,
+    language="en",
+    max_attempts=3,
+    engine="chatterbox",
+):
+    """Generate one wav per sentence using the loaded TTS model.
+
+    Engine-agnostic: dispatches to ``_generate_chatterbox`` or
+    ``_generate_xtts`` and writes the result via ``torchaudio.save``.
+    """
     for i, sent in enumerate(sentences):
         clean_sent = conditional_sentence_case(sent.strip())
         for attempt in range(1, max_attempts + 1):
             try:
-                if sample == "none":
-                    if language != "en":
-                        wav = model.generate(clean_sent, language_id=language)
-                    else:
-                        wav = model.generate(clean_sent)
+                if engine == "xtts_v2":
+                    wav, sr = _generate_xtts(model, clean_sent, sample, language)
                 else:
-                    if language != "en":
-                        wav = model.generate(clean_sent, audio_prompt_path=sample, language_id=language)
-                    else:
-                        wav = model.generate(clean_sent, audio_prompt_path=sample, exaggeration=exaggeration, cfg_weight=cfg_weight)
+                    wav, sr = _generate_chatterbox(
+                        model, clean_sent, sample, language, exaggeration, cfg_weight
+                    )
 
-                ta.save(filenames[i], wav, model.sr)
+                # XTTS returns a numpy float array; torchaudio.save needs a 2-D tensor.
+                if not isinstance(wav, torch.Tensor):
+                    wav = torch.tensor(wav, dtype=torch.float32).unsqueeze(0)
+                ta.save(filenames[i], wav, sr)
                 if not os.path.isfile(filenames[i]):
                     raise FileNotFoundError(f"File {filenames[i]} was not created.")
                 break
@@ -139,8 +175,37 @@ def chatterbox_read(sentences, sample, filenames, model, exaggeration, cfg_weigh
                 else:
                     logger.error("Failed to process sentence %r after %d attempts: %s", clean_sent, max_attempts, e)
 
+
+# Back-compat alias so older imports / tests that referenced the chatterbox-only
+# entry point continue to work. New code should call `synthesize_paragraph`.
+chatterbox_read = synthesize_paragraph
+
+def _load_tts_model(engine: str, language: str, device: str):
+    """Load the right TTS model based on the chosen engine.
+
+    XTTS imports are deferred so users who never pick xtts_v2 don't need
+    the heavy `TTS` package installed.
+    """
+    if engine == "xtts_v2":
+        try:
+            from TTS.api import TTS as _TTS
+        except ImportError as e:
+            raise RuntimeError(
+                "Engine 'xtts_v2' requires the Coqui TTS package. "
+                "Install with: pip install TTS"
+            ) from e
+        logger.info("Loading XTTS v2 (coqui)")
+        return _TTS("tts_models/multilingual/multi-dataset/xtts_v2").to(device)
+
+    if language != "en":
+        logger.info("Loading ChatterboxMultilingualTTS for language: %s", language)
+        return ChatterboxMultilingualTTS.from_pretrained(device=device)
+    return ChatterboxTTS.from_pretrained(device=device)
+
+
 def read_book(book_contents, sample, notitles, exaggeration, cfg_weight, language="en",
-              paragraph_pause_ms=600, min_sentence_words=8, max_attempts=3):
+              paragraph_pause_ms=600, min_sentence_words=8, max_attempts=3,
+              engine="chatterbox"):
     # Automatically detect the best available device
     if torch.cuda.is_available():
         device = "cuda"
@@ -149,14 +214,9 @@ def read_book(book_contents, sample, notitles, exaggeration, cfg_weight, languag
     else:
         device = "cpu"
     current_device = torch.device(device)
-    logger.info("Attempting to use device: %s", device)
+    logger.info("Attempting to use device: %s | engine: %s", device, engine)
 
-    use_multilingual = language != "en"
-    if use_multilingual:
-        logger.info("Loading ChatterboxMultilingualTTS for language: %s", language)
-        model = ChatterboxMultilingualTTS.from_pretrained(device=device)
-    else:
-        model = ChatterboxTTS.from_pretrained(device=device)
+    model = _load_tts_model(engine, language, device)
 
     start_time = time.time()
     total_chars = sum(len(''.join(chapter['paragraphs'])) for chapter in book_contents)
@@ -207,7 +267,17 @@ def read_book(book_contents, sample, notitles, exaggeration, cfg_weight, languag
                     filenames = [
                         "sntnc" + str(z) + ".wav" for z in range(len(sentences))
                     ]
-                    chatterbox_read(sentences, sample, filenames, model, exaggeration, cfg_weight, language, max_attempts=max_attempts)
+                    synthesize_paragraph(
+                        sentences,
+                        sample,
+                        filenames,
+                        model,
+                        exaggeration,
+                        cfg_weight,
+                        language,
+                        max_attempts=max_attempts,
+                        engine=engine,
+                    )
                     append_silence(filenames[-1], paragraph_pause_ms)
                     sorted_files = sorted(filenames, key=sort_key)
                     combined = AudioSegment.empty()
@@ -406,6 +476,17 @@ def main():
         default=3,
         help="Number of times to retry a sentence if TTS generation fails (default: 3)",
     )
+    parser.add_argument(
+        "--engine",
+        type=str,
+        choices=["chatterbox", "xtts_v2"],
+        default="chatterbox",
+        help=(
+            "TTS engine. 'chatterbox' (default, MIT license, expressive) or "
+            "'xtts_v2' (Coqui XTTS v2, often higher narrator-fidelity, "
+            "non-commercial license). xtts_v2 requires `pip install TTS`."
+        ),
+    )
     verbosity = parser.add_mutually_exclusive_group()
     verbosity.add_argument("-v", "--verbose", action="store_true", help="Enable DEBUG logging")
     verbosity.add_argument("-q", "--quiet", action="store_true", help="Only log warnings and errors")
@@ -435,6 +516,7 @@ def main():
         paragraph_pause_ms=args.paragraph_pause_ms,
         min_sentence_words=args.min_sentence_words,
         max_attempts=args.retry_count,
+        engine=args.engine,
     )
     generate_metadata(files, book_author, book_title, chapter_titles)
     m4bfilename = make_m4b(files, args.sourcefile, sample)

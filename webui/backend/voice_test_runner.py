@@ -26,6 +26,12 @@ def main() -> int:
     parser.add_argument("--exaggeration", type=float, default=0.7)
     parser.add_argument("--cfg-weight", type=float, default=0.4)
     parser.add_argument("--language", default="en")
+    parser.add_argument(
+        "--engine",
+        choices=["chatterbox", "xtts_v2"],
+        default="chatterbox",
+        help="TTS engine to use for the preview.",
+    )
     args = parser.parse_args()
 
     # Heavy imports deferred until after argparse so --help is fast.
@@ -38,14 +44,31 @@ def main() -> int:
         device = "mps"
     else:
         device = "cpu"
-    print(f"Attempting to use device: {device}", flush=True)
+    print(f"Attempting to use device: {device} | engine: {args.engine}", flush=True)
 
     text = args.text.strip()
     if not text:
         print("ERROR: --text was empty after stripping whitespace", file=sys.stderr)
         return 2
 
-    if args.language != "en":
+    if args.engine == "xtts_v2":
+        try:
+            from TTS.api import TTS
+        except ImportError:
+            print(
+                "ERROR: engine 'xtts_v2' requires the Coqui TTS package. "
+                "Install with: pip install TTS",
+                file=sys.stderr,
+            )
+            return 3
+        if not args.sample:
+            print("ERROR: xtts_v2 requires --sample (a voice to clone)", file=sys.stderr)
+            return 4
+        print("Loading XTTS v2", flush=True)
+        model = TTS("tts_models/multilingual/multi-dataset/xtts_v2").to(device)
+        wav = model.tts(text=text, speaker_wav=args.sample, language=args.language)
+        sr = 24000
+    elif args.language != "en":
         from chatterbox.mtl_tts import ChatterboxMultilingualTTS
 
         print(f"Loading ChatterboxMultilingualTTS for language: {args.language}", flush=True)
@@ -54,6 +77,7 @@ def main() -> int:
             wav = model.generate(text, audio_prompt_path=args.sample, language_id=args.language)
         else:
             wav = model.generate(text, language_id=args.language)
+        sr = model.sr
     else:
         from chatterbox.tts import ChatterboxTTS
 
@@ -68,10 +92,14 @@ def main() -> int:
             )
         else:
             wav = model.generate(text)
+        sr = model.sr
+
+    if not isinstance(wav, torch.Tensor):
+        wav = torch.tensor(wav, dtype=torch.float32).unsqueeze(0)
 
     out_path = Path(args.out)
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    ta.save(str(out_path), wav, model.sr)
+    ta.save(str(out_path), wav, sr)
     print(f"Wrote {out_path}", flush=True)
     return 0
 

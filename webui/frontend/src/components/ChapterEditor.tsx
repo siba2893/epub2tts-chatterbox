@@ -15,6 +15,7 @@ interface Props {
 }
 
 const DEFAULT_SETTINGS: Settings = {
+  engine: "chatterbox",
   paragraph_pause_ms: 600,
   min_sentence_words: 8,
   exaggeration: 0.7,
@@ -229,6 +230,7 @@ export default function ChapterEditor({ jobId, onStarted }: Props) {
         selected={settings.sample_path ?? null}
         onSelect={(p) => setSettings({ ...settings, sample_path: p })}
         testSettings={{
+          engine: settings.engine,
           exaggeration: settings.exaggeration,
           cfg_weight: settings.cfg_weight,
           language: settings.language,
@@ -262,8 +264,35 @@ function SettingsPanel({
   function set<K extends keyof Settings>(key: K, v: Settings[K]) {
     onChange({ ...value, [key]: v });
   }
+  const isXtts = value.engine === "xtts_v2";
   return (
     <div className="surface-muted p-4 grid grid-cols-2 gap-4 text-sm">
+      <div className="col-span-2">
+        <label className="label">tts engine</label>
+        <div className="flex gap-2">
+          {(["chatterbox", "xtts_v2"] as const).map((opt) => (
+            <button
+              key={opt}
+              type="button"
+              onClick={() => set("engine", opt)}
+              className={`flex-1 px-3 py-2 rounded-md border text-xs uppercase tracking-wider transition-colors ${
+                value.engine === opt
+                  ? "bg-zinc-100 text-zinc-950 border-emerald-400"
+                  : "bg-zinc-950 text-zinc-300 border-zinc-800 hover:bg-zinc-800"
+              }`}
+            >
+              {opt === "chatterbox"
+                ? "chatterbox · MIT"
+                : "xtts v2 · non-commercial"}
+            </button>
+          ))}
+        </div>
+        <p className="text-[11px] text-zinc-500 mt-2">
+          {isXtts
+            ? "XTTS v2 (Coqui): often better narrator-fidelity. Requires `pip install TTS` and a voice sample. Coqui Public Model License — non-commercial use only."
+            : "Chatterbox (Resemble AI): MIT-licensed, expressive. Honors exaggeration / cfg_weight. Default for any commercial use."}
+        </p>
+      </div>
       <div>
         <label className="label">paragraph pause (ms)</label>
         <input
@@ -283,22 +312,30 @@ function SettingsPanel({
         />
       </div>
       <div>
-        <label className="label">exaggeration</label>
+        <label className="label">
+          exaggeration{" "}
+          {isXtts && <span className="text-zinc-600 normal-case tracking-normal">(chatterbox only)</span>}
+        </label>
         <input
           className="input"
           type="number"
           step={0.05}
           value={value.exaggeration}
+          disabled={isXtts}
           onChange={(e) => set("exaggeration", Number(e.target.value))}
         />
       </div>
       <div>
-        <label className="label">cfg weight</label>
+        <label className="label">
+          cfg weight{" "}
+          {isXtts && <span className="text-zinc-600 normal-case tracking-normal">(chatterbox only)</span>}
+        </label>
         <input
           className="input"
           type="number"
           step={0.05}
           value={value.cfg_weight}
+          disabled={isXtts}
           onChange={(e) => set("cfg_weight", Number(e.target.value))}
         />
       </div>

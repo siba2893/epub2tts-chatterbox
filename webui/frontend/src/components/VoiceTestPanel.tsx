@@ -5,8 +5,8 @@ interface Props {
   samplePath: string | null;
   sampleFilename: string;
   /** Settings inherited from the editor so the test reflects the user's
-   *  exaggeration / cfg_weight / language choices. */
-  settings: Pick<Settings, "exaggeration" | "cfg_weight" | "language">;
+   *  engine / exaggeration / cfg_weight / language choices. */
+  settings: Pick<Settings, "engine" | "exaggeration" | "cfg_weight" | "language">;
   onClose: () => void;
 }
 
@@ -41,6 +41,7 @@ export default function VoiceTestPanel({
         exaggeration: settings.exaggeration,
         cfg_weight: settings.cfg_weight,
         language: settings.language ?? "en",
+        engine: settings.engine,
       });
       // Cache-bust so the same URL (rare) doesn't replay the previous file.
       setAudioUrl(`${res.url}?t=${Date.now()}`);

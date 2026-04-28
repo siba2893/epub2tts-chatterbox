@@ -40,7 +40,10 @@ export interface TextDocument {
   chapters: ChapterEdit[];
 }
 
+export type TTSEngine = "chatterbox" | "xtts_v2";
+
 export interface Settings {
+  engine: TTSEngine;
   paragraph_pause_ms: number;
   min_sentence_words: number;
   exaggeration: number;
@@ -199,6 +202,7 @@ export async function voiceTest(input: {
   exaggeration?: number;
   cfg_weight?: number;
   language?: string;
+  engine?: TTSEngine;
 }): Promise<VoiceTestResult> {
   return json(
     await fetch(`${API}/api/voice-test`, {

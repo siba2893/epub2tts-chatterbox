@@ -60,6 +60,21 @@ cd webui/frontend && npm run dev
 
 Backend tests: `pytest webui/backend/tests/`. Frontend production bundle: `cd webui/frontend && npm run build`.
 
+### TTS engines
+
+The CLI and the web UI both support two engines:
+
+- **chatterbox** (default, MIT licensed). Resemble AI's Chatterbox — expressive, honors `--exaggeration` and `--cfg_weight`. Already installed via `requirements.txt`.
+- **xtts_v2** (Coqui XTTS v2, **non-commercial license**). Often preserves narrator timbre better. Requires an extra install:
+
+  ```
+  pip install TTS
+  ```
+
+  XTTS v2 always requires a voice sample (`--sample`); it can't synthesize without one. The model auto-downloads on first run (~1.8 GB).
+
+Pick the engine via `--engine chatterbox|xtts_v2` on the CLI, or via the engine selector at the top of the Settings panel in the web UI. The voice-test "try" button uses the same engine selection so you can A/B chatterbox vs XTTS on the same sample.
+
 ## 🐞 Reporting bugs
 <details>
 <summary>How to report bugs/issues</summary>

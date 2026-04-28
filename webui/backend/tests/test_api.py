@@ -8,7 +8,8 @@ from fastapi.testclient import TestClient
 
 from webui.backend import app as app_module
 from webui.backend.app import app
-from webui.backend.jobs import parse_progress_line
+from webui.backend.jobs import build_cli_command, parse_progress_line
+from webui.backend.schemas import Settings
 
 
 FIXTURE_EPUB = Path(__file__).resolve().parents[3] / "tests" / "fixtures" / "sample.epub"
@@ -131,6 +132,23 @@ class TestProgressParser:
     def test_error_line_classified(self):
         evt = parse_progress_line("ERROR: ffmpeg failed")
         assert evt is not None and evt["type"] == "error"
+
+
+class TestEngineForwarding:
+    def test_default_engine_is_chatterbox(self, tmp_path):
+        argv = build_cli_command(tmp_path, tmp_path / "book.txt", Settings())
+        assert "--engine" in argv
+        assert argv[argv.index("--engine") + 1] == "chatterbox"
+
+    def test_xtts_v2_forwarded(self, tmp_path):
+        argv = build_cli_command(
+            tmp_path, tmp_path / "book.txt", Settings(engine="xtts_v2")
+        )
+        assert argv[argv.index("--engine") + 1] == "xtts_v2"
+
+    def test_invalid_engine_rejected(self):
+        with pytest.raises(Exception):
+            Settings(engine="bogus")  # type: ignore[arg-type]
 
 
 class TestChaptersAndLibrary:

@@ -69,8 +69,12 @@ class TextDocument(BaseModel):
     chapters: list[ChapterEdit]
 
 
+TTSEngine = Literal["chatterbox", "xtts_v2"]
+
+
 class Settings(BaseModel):
     """TTS / pipeline tunables forwarded to the CLI as flags."""
+    engine: TTSEngine = "chatterbox"
     paragraph_pause_ms: int = 600
     min_sentence_words: int = 8
     exaggeration: float = 0.7
@@ -116,3 +120,4 @@ class VoiceTestRequest(BaseModel):
     exaggeration: float = 0.7
     cfg_weight: float = 0.4
     language: str = "en"
+    engine: TTSEngine = "chatterbox"
